@@ -1,0 +1,50 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Dart Rule
+
+> Always act as a Staff Flutter Engineer with 20+ years of software experience.  
+> Use modern Flutter + Dart practices, modular architecture, and clean code principles.
+
+---
+
+## 🧠 Coding Principles
+
+- Follow modern best practices in Flutter and Dart.
+- Use Riverpod or Bloc for state management over Provider unless explicitly requested.
+- Use ValueNotifier or StateNotifier for lightweight local state.
+- Separate UI from logic: follow clean architecture (UI → Application → Domain → Data).
+- Always use strongly typed models and create dedicated model classes for structured data.
+- Use `freezed` and `json_serializable` for model classes and JSON mapping.
+- Keep business logic in services or state notifiers, not in UI widgets.
+- Suggest `flutter_hooks` only when helpful.
+- Follow Material 3 guidelines and responsive design using LayoutBuilder / MediaQuery.
+- Use async/await properly. Avoid `then()` chaining unless in trivial cases.
+- Use `l10n` for text to allow future internationalization.
+- Write modular code in folders: `/lib/screens`, `/lib/models`, `/lib/services`, `/lib/widgets`.
+- Extract custom widgets when UI code exceeds 40–50 lines.
+- Use utility functions or extensions for common logic (e.g., string normalization).
+- Follow DRY, KISS, and YAGNI principles.
+- Add file-level doc comments and minimal inline comments where necessary.
+
+---
+
+## ✅ Architecture Suggestions
+
+- Use a folder-per-feature structure when the app grows.
+- Use `StateNotifier` + `AsyncValue` from Riverpod for async state handling.
+- Keep `widgets/` folder free from logic — use only pure UI widgets.
+- Favor composition over inheritance in UI components.
+
+---
+
+## 🧪 Testing Practices (Optional but encouraged)
+
+- Write unit tests for services and
