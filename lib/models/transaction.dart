@@ -52,6 +52,31 @@ class Transaction {
     };
   }
     
+  // Create a copy with modified fields
+  Transaction copyWith({
+    String? id,
+    DateTime? date,
+    String? description,
+    double? amount,
+    String? category,
+    String? subcategory,
+    String? matchedKeyword,
+    String? bankName,
+    String? notes,
+  }) {
+    return Transaction(
+      id: id ?? this.id,
+      date: date ?? this.date,
+      description: description ?? this.description,
+      amount: amount ?? this.amount,
+      category: category ?? this.category,
+      subcategory: subcategory ?? this.subcategory,
+      matchedKeyword: matchedKeyword ?? this.matchedKeyword,
+      bankName: bankName ?? this.bankName,
+      notes: notes ?? this.notes,
+    );
+  }
+    
   // Helper factory to create from CSV row data
   factory Transaction.fromCsvRow(
     Map<String, dynamic> rowData, 

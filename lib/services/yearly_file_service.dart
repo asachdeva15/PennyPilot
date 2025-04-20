@@ -268,29 +268,13 @@ class YearlyFileService {
   
   // Get transactions for a specific month
   Future<List<Transaction>> getTransactionsForMonth(int year, int month) async {
-    // If it's the current month, return from current month data
-    if (year == _currentYear && month == _currentMonth && _currentMonthData != null) {
-      return _currentMonthData!.transactions;
-    }
-    
     try {
-      // Try to get from yearly file
-      final yearFilePath = _getYearlyFilePath(year);
-      final yearFile = File(yearFilePath);
+      final yearlyData = await getYearlyData(year);
       
-      if (await yearFile.exists()) {
-        final contents = await yearFile.readAsString();
-        final json = jsonDecode(contents) as Map<String, dynamic>;
-        final yearData = YearlyData.fromJson(json);
-        
-        // Get the month data
-        final monthData = yearData.months[month];
-        if (monthData != null) {
-          return monthData.transactions;
-        }
+      if (yearlyData.months.containsKey(month)) {
+        return yearlyData.months[month]!.transactions;
       }
       
-      // If we get here, no data was found
       return [];
     } catch (e) {
       print('Error getting transactions for month: $e');
@@ -531,6 +515,28 @@ class YearlyFileService {
         'success': false,
         'message': 'Error repairing yearly data: $e'
       };
+    }
+  }
+  
+  // Update a specific month's data in the yearly file
+  Future<bool> updateMonth(int year, int month, MonthlyData updatedMonthData) async {
+    try {
+      // Load the yearly data
+      final yearlyData = await getYearlyData(year);
+      
+      // Update the month data
+      final updatedYearlyData = yearlyData.updateMonth(month, updatedMonthData);
+      
+      // Recalculate the summary
+      final recalculatedYearlyData = updatedYearlyData.recalculateSummary(updatedYearlyData.months);
+      
+      // Save the updated yearly data
+      await _writeYearlyData(recalculatedYearlyData);
+      
+      return true;
+    } catch (e) {
+      print('Error updating month $month in year $year: $e');
+      return false;
     }
   }
 } 

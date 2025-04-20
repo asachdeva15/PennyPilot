@@ -7,6 +7,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:csv/csv.dart'; // Import the csv package
 import 'mapping_screen.dart'; // Import the new mapping screen
 import 'transaction_screen.dart'; // Import the transaction screen
+import 'yearly_detail_screen.dart'; // Import the yearly detail screen
+import 'transaction_history_screen.dart'; // Import the transaction history screen
 import '../services/file_service.dart';
 import '../models/transaction.dart'; // Import transaction model
 import '../models/bank_mapping.dart'; // Import bank mapping model
@@ -238,8 +240,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _buildYearlySummary(),
-                        const SizedBox(height: 24),
-                        _buildMonthlyBreakdown(),
                       ],
                     ),
                   ),
@@ -306,6 +306,20 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.history),
+            title: const Text('Transaction History'),
+            onTap: () {
+              Navigator.pop(context); // Close the drawer
+              Navigator.push(
+                context, 
+                MaterialPageRoute(builder: (context) => const TransactionHistoryScreen()),
+              ).then((_) {
+                // Refresh data when returning
+                _loadData();
+              });
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.rule),
             title: const Text('Category Mappings'),
             onTap: () {
@@ -334,105 +348,74 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return Card(
-      elevation: 3,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Yearly Summary',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: () => _navigateToYearlyDetailScreen(),
+          child: Card(
+            elevation: 3,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Yearly Summary',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      const Icon(Icons.arrow_forward_ios, size: 16),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _buildSummaryRow('Total Income', _yearlyData!.summary.totalIncome, Colors.green),
+                  _buildSummaryRow('Total Expenses', _yearlyData!.summary.totalExpenses, Colors.red),
+                  _buildSummaryRow('Total Savings', _yearlyData!.summary.totalSavings, Colors.blue),
+                  _buildSummaryRow('Transactions', _yearlyData!.summary.transactionCount.toDouble(), Colors.grey),
+                  
+                  const SizedBox(height: 16),
+                  Text(
+                    'Last Updated: ${_yearlyData!.summary.lastUpdated != null 
+                      ? DateFormat('yyyy-MM-dd HH:mm').format(_yearlyData!.summary.lastUpdated!) 
+                      : 'Not available'}',
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 16),
-            _buildSummaryRow('Total Income', _yearlyData!.summary.totalIncome, Colors.green),
-            _buildSummaryRow('Total Expenses', _yearlyData!.summary.totalExpenses, Colors.red),
-            _buildSummaryRow('Total Savings', _yearlyData!.summary.totalSavings, Colors.blue),
-            _buildSummaryRow('Transactions', _yearlyData!.summary.transactionCount.toDouble(), Colors.grey),
-            
-            const SizedBox(height: 16),
-            Text(
-              'Last Updated: ${_yearlyData!.summary.lastUpdated != null 
-                ? DateFormat('yyyy-MM-dd HH:mm').format(_yearlyData!.summary.lastUpdated!) 
-                : 'Not available'}',
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-          ],
+          ),
         ),
+      ],
+    );
+  }
+
+  // Navigate to yearly detail screen
+  void _navigateToYearlyDetailScreen() {
+    if (_yearlyData == null) return;
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => YearlyDetailScreen(yearlyData: _yearlyData!),
       ),
     );
   }
 
-  Widget _buildMonthlyBreakdown() {
-    if (_yearlyData == null || _yearlyData!.months.isEmpty) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Text('No monthly data available'),
-        ),
-      );
-    }
-
-    final monthNames = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Monthly Breakdown',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        
-        // Create a list of available months
-        ..._yearlyData!.months.entries.map((entry) {
-            final month = entry.key;
-            final monthData = entry.value;
-            final year = _yearlyData!.year;
-            
-            return Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '${monthNames[month - 1]} $year',
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          'Total: ${currencyFormat.format(monthData.summary.totalSavings)}',
-                          style: TextStyle(
-                            color: monthData.summary.totalSavings >= 0 ? Colors.green : Colors.red,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildMonthSummaryItem('Income', monthData.summary.totalIncome, Colors.green),
-                        _buildMonthSummaryItem('Expenses', monthData.summary.totalExpenses, Colors.red),
-                        _buildMonthSummaryItem('Transactions', monthData.summary.transactionCount.toDouble(), Colors.grey),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }).toList().reversed.toList(), // Show the most recent months first
-      ],
-    );
+  // Helper method to get a color for each category
+  Color _getCategoryColor(String category) {
+    // Map categories to specific colors
+    final Map<String, Color> categoryColors = {
+      'Fundamentals': Colors.blue,
+      'Lifestyle': Colors.purple,
+      'Income': Colors.green,
+      'Uncategorized': Colors.grey,
+    };
+    
+    // Return the mapped color or a default
+    return categoryColors[category] ?? Colors.orange;
   }
 
   Widget _buildSummaryRow(String label, double value, Color color) {
@@ -455,26 +438,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildMonthSummaryItem(String label, double value, Color color) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-        Text(
-          label == 'Transactions' ? value.toInt().toString() : currencyFormat.format(value),
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
-        ),
-      ],
     );
   }
 
@@ -1522,30 +1485,48 @@ class _HomeScreenState extends State<HomeScreen> {
   // Load data for the home screen
   Future<void> _loadData() async {
     if (!mounted) return;
-    
+
     setState(() {
       _isLoading = true;
     });
-    
+
     try {
       // Initialize storage if needed
       await _fileService.initializeStorage();
       
-      // Reload banks
-      await _loadBanks();
+      // Get the yearly data repository
+      final yearlyRepo = YearlyDataRepository();
+      await yearlyRepo.initialize();
       
+      // Get yearly data
+      final now = DateTime.now();
+      final currentYear = now.year;
+      print('Loading yearly data for year: $currentYear');
+      
+      final yearData = await yearlyRepo.getYearlyData(currentYear);
+      print('Yearly data loaded successfully: ${yearData != null}');
+      
+      if (yearData != null) {
+        print('Yearly summary: Income=${yearData.summary.totalIncome}, Expenses=${yearData.summary.totalExpenses}');
+        print('Months available: ${yearData.months.keys.toList()}');
+        print('Number of transactions: ${yearData.summary.transactionCount}');
+      }
+      
+      if (mounted) {
+        setState(() {
+          _yearlyData = yearData;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       print('Error loading data: $e');
       if (mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading data: $e')),
-    );
-      }
-    } finally {
-      if (mounted) {
-    setState(() { 
-      _isLoading = false;
-    });
+        );
+        setState(() {
+          _isLoading = false;
+        });
       }
     }
   }

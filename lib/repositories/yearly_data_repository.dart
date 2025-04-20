@@ -52,49 +52,21 @@ class YearlyDataRepository {
   Future<bool> saveTransactions(List<Transaction> transactions) async {
     await _ensureInitialized();
     
-    // Get existing transactions for duplicate checking
-    Map<int, List<Transaction>> existingTransactionsByMonth = {};
+    if (transactions.isEmpty) {
+      print('No transactions to save');
+      return true;
+    }
     
-    bool allSucceeded = true;
+    bool allSuccessful = true;
+    
     for (final transaction in transactions) {
-      final transactionYear = transaction.date.year;
-      final transactionMonth = transaction.date.month;
-      
-      // Load existing transactions for this month/year if not already loaded
-      if (!existingTransactionsByMonth.containsKey(transactionMonth)) {
-        existingTransactionsByMonth[transactionMonth] = 
-            await _fileService.getTransactionsForMonth(transactionYear, transactionMonth);
-      }
-      
-      // Check for duplicates
-      bool isDuplicate = false;
-      for (final existingTransaction in existingTransactionsByMonth[transactionMonth]!) {
-        // Check if it's a duplicate based on date, description, and amount
-        if (existingTransaction.date.day == transaction.date.day &&
-            existingTransaction.date.month == transaction.date.month &&
-            existingTransaction.date.year == transaction.date.year &&
-            existingTransaction.description == transaction.description &&
-            existingTransaction.amount == transaction.amount) {
-          isDuplicate = true;
-          print('Skipping duplicate transaction: ${transaction.description} on ${transaction.date} for ${transaction.amount}');
-          break;
-        }
-      }
-      
-      // Only save if not a duplicate
-      if (!isDuplicate) {
-        final success = await _fileService.addTransaction(transaction);
-        
-        if (success) {
-          // Add to our local cache of existing transactions to check against future imports
-          existingTransactionsByMonth[transactionMonth]!.add(transaction);
-        } else {
-          allSucceeded = false;
-        }
+      final success = await saveTransaction(transaction);
+      if (!success) {
+        allSuccessful = false;
       }
     }
     
-    return allSucceeded;
+    return allSuccessful;
   }
   
   /// Get transactions for a specific month
@@ -119,6 +91,118 @@ class YearlyDataRepository {
   Future<bool> migrateFromLegacyStorage() async {
     await _ensureInitialized();
     return await _fileService.migrateFromSharedPreferences();
+  }
+  
+  /// Update an existing transaction
+  Future<bool> updateTransaction(Transaction updatedTransaction) async {
+    await _ensureInitialized();
+    
+    try {
+      // Get the month data where the transaction belongs
+      final year = updatedTransaction.date.year;
+      final month = updatedTransaction.date.month;
+      
+      // Get the current yearly data
+      final yearlyData = await getYearlyData(year);
+      
+      // Check if the month exists
+      if (!yearlyData.months.containsKey(month)) {
+        print('Month $month not found in year $year');
+        return false;
+      }
+      
+      // Get the month data
+      final monthData = yearlyData.months[month]!;
+      
+      // Find the transaction to update
+      final transactionIndex = monthData.transactions.indexWhere(
+        (t) => t.id == updatedTransaction.id
+      );
+      
+      if (transactionIndex == -1) {
+        print('Transaction not found: ${updatedTransaction.id}');
+        return false;
+      }
+      
+      // Create a new list with the updated transaction
+      final updatedTransactions = List<Transaction>.from(monthData.transactions);
+      updatedTransactions[transactionIndex] = updatedTransaction;
+      
+      // Create updated month data
+      final updatedMonthData = monthData.copyWith(
+        transactions: updatedTransactions,
+      );
+      
+      // Update the month in yearly data
+      final success = await _fileService.updateMonth(
+        year, 
+        month, 
+        updatedMonthData,
+      );
+      
+      return success;
+    } catch (e) {
+      print('Error updating transaction: $e');
+      return false;
+    }
+  }
+  
+  /// Delete a transaction
+  Future<bool> deleteTransaction(Transaction transaction) async {
+    await _ensureInitialized();
+    
+    try {
+      // Get the month data where the transaction belongs
+      final year = transaction.date.year;
+      final month = transaction.date.month;
+      
+      // Get the current yearly data
+      final yearlyData = await getYearlyData(year);
+      
+      // Check if the month exists
+      if (!yearlyData.months.containsKey(month)) {
+        print('Month $month not found in year $year');
+        return false;
+      }
+      
+      // Get the month data
+      final monthData = yearlyData.months[month]!;
+      
+      // Find the transaction to delete
+      final transactionIndex = monthData.transactions.indexWhere(
+        (t) => t.id == transaction.id
+      );
+      
+      if (transactionIndex == -1) {
+        print('Transaction not found: ${transaction.id}');
+        return false;
+      }
+      
+      // Create a new list without the deleted transaction
+      final updatedTransactions = List<Transaction>.from(monthData.transactions);
+      updatedTransactions.removeAt(transactionIndex);
+      
+      // Create updated month data
+      final updatedMonthData = monthData.copyWith(
+        transactions: updatedTransactions,
+      );
+      
+      // Update the month in yearly data
+      final success = await _fileService.updateMonth(
+        year, 
+        month, 
+        updatedMonthData,
+      );
+      
+      if (success) {
+        print('Transaction deleted successfully: ${transaction.id}');
+      }
+      
+      return success;
+    } catch (e) {
+      print('Error deleting transaction: $e');
+      return false;
+    }
   }
   
   // Private helper to ensure the repository is initialized
