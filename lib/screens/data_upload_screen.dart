@@ -14,20 +14,16 @@ import '../providers/yearly_data_provider.dart';
 import '../repositories/yearly_data_repository.dart';
 import '../screens/category_management_screen.dart';
 import '../screens/category_mapping_screen.dart';
-import '../models/yearly_data.dart';
-import '../models/monthly_data.dart';
-import 'data_upload_screen.dart';
-import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
+import 'home_screen.dart'; // Import home screen for navigation
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+class DataUploadScreen extends StatefulWidget {
+  const DataUploadScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<DataUploadScreen> createState() => _DataUploadScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _DataUploadScreenState extends State<DataUploadScreen> {
   String? _selectedBank;
   List<String> _banks = [];
   String? _filePath;
@@ -35,8 +31,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _banksLoading = true; // State for loading banks initially
   String? _errorMessage;
   BankMapping? _currentMapping; // Add this field for bank mapping
-  YearlyData? _yearlyData;
-  final currencyFormat = NumberFormat.currency(locale: 'de_DE', symbol: '€');
 
   // Instance of FileService
   final FileService _fileService = FileService();
@@ -49,7 +43,6 @@ class _HomeScreenState extends State<HomeScreen> {
     
     // Check if current month data needs archiving
     _checkCurrentMonthData();
-    _loadData();
   }
 
   @override
@@ -183,7 +176,68 @@ class _HomeScreenState extends State<HomeScreen> {
     final headerHeight = screenHeight / 5; // Top 1/5 of screen (changed from 1/4)
     
     return Scaffold(
-      drawer: _buildDrawer(),
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            DrawerHeader(
+              decoration: const BoxDecoration(
+                color: Color(0xFFE68A00),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Image.asset(
+                    'LOGO.png',
+                    width: 100,
+                    height: 89,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'PennyPilot',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.home),
+              title: const Text('Home'),
+              onTap: () {
+                Navigator.pop(context); // Close the drawer
+                Navigator.push(
+                  context, 
+                  MaterialPageRoute(builder: (context) => const HomeScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.upload_file),
+              title: const Text('Upload Transactions'),
+              onTap: () {
+                Navigator.pop(context); // Close the drawer
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.rule),
+              title: const Text('Category Mappings'),
+              onTap: () {
+                Navigator.pop(context); // Close the drawer
+                Navigator.push(
+                  context, 
+                  MaterialPageRoute(builder: (context) => const CategoryMappingScreen()),
+                ).then((_) {
+                  // Refresh banks when returning from category mappings
+                  _loadBanks();
+                });
+              },
+            ),
+          ],
+        ),
+      ),
       appBar: AppBar(
         toolbarHeight: 0, // Zero height app bar to let the custom header show
         backgroundColor: const Color(0xFFE68A00),
@@ -227,254 +281,113 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           // Content area
           Expanded(
-            child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : RefreshIndicator(
-                  onRefresh: _loadData,
-                  child: SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildYearlySummary(),
-                        const SizedBox(height: 24),
-                        _buildMonthlyBreakdown(),
-                      ],
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Text(
+                    '1. Select Bank:',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  // Show loading indicator or dropdown
+                  _banksLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : IgnorePointer(
+                        ignoring: _isLoading, // Still ignore during file processing
+                        child: DropdownButton<String>(
+                          value: _selectedBank,
+                          isExpanded: true,
+                          items: _banks.map<DropdownMenuItem<String>>((String value) {
+                            return DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(value),
+                            );
+                          }).toList(),
+                          onChanged: (String? newValue) {
+                            setState(() {
+                              _selectedBank = newValue;
+                            });
+                          },
+                        ),
+                      ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    '2. Upload Bank CSV:',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Center(
+                    child: ElevatedButton.icon(
+                      icon: _isLoading
+                          ? Container( // Show loading indicator
+                              width: 24,
+                              height: 24,
+                              padding: const EdgeInsets.all(2.0),
+                              child: const CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 3,
+                              ),
+                            )
+                          : const Icon(Icons.upload_file), // Show icon otherwise
+                      label: Text(_isLoading ? 'Processing...' : 'Select CSV File'),
+                      onPressed: _isLoading ? null : _pickFile, // Disable button when loading
                     ),
                   ),
-                ),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _checkDataIntegrity,
-        backgroundColor: Colors.green,
-        child: const Icon(Icons.check_circle),
-        tooltip: 'Check Data Integrity',
-      ),
-    );
-  }
-
-  Widget _buildDrawer() {
-    return Drawer(
-      child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          DrawerHeader(
-            decoration: const BoxDecoration(
-              color: Color(0xFFE68A00),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Image.asset(
-                  'LOGO.png',
-                  width: 100,
-                  height: 89,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'PennyPilot',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.home),
-            title: const Text('Home'),
-            onTap: () {
-              Navigator.pop(context); // Close the drawer
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.upload_file),
-            title: const Text('Upload Transactions'),
-            onTap: () {
-              Navigator.pop(context); // Close the drawer
-              Navigator.push(
-                context, 
-                MaterialPageRoute(builder: (context) => const DataUploadScreen()),
-              ).then((_) {
-                // Refresh data when returning from upload screen
-                _loadData();
-              });
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.rule),
-            title: const Text('Category Mappings'),
-            onTap: () {
-              Navigator.pop(context); // Close the drawer
-              Navigator.push(
-                context, 
-                MaterialPageRoute(builder: (context) => const CategoryMappingScreen()),
-              ).then((_) {
-                // Refresh data when returning
-                _loadData();
-              });
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildYearlySummary() {
-    if (_yearlyData == null) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Text('No yearly data available'),
-        ),
-      );
-    }
-
-    return Card(
-      elevation: 3,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Yearly Summary',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            _buildSummaryRow('Total Income', _yearlyData!.summary.totalIncome, Colors.green),
-            _buildSummaryRow('Total Expenses', _yearlyData!.summary.totalExpenses, Colors.red),
-            _buildSummaryRow('Total Savings', _yearlyData!.summary.totalSavings, Colors.blue),
-            _buildSummaryRow('Transactions', _yearlyData!.summary.transactionCount.toDouble(), Colors.grey),
-            
-            const SizedBox(height: 16),
-            Text(
-              'Last Updated: ${_yearlyData!.summary.lastUpdated != null 
-                ? DateFormat('yyyy-MM-dd HH:mm').format(_yearlyData!.summary.lastUpdated!) 
-                : 'Not available'}',
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMonthlyBreakdown() {
-    if (_yearlyData == null || _yearlyData!.months.isEmpty) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Text('No monthly data available'),
-        ),
-      );
-    }
-
-    final monthNames = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Monthly Breakdown',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        
-        // Create a list of available months
-        ..._yearlyData!.months.entries.map((entry) {
-            final month = entry.key;
-            final monthData = entry.value;
-            final year = _yearlyData!.year;
-            
-            return Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '${monthNames[month - 1]} $year',
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          'Total: ${currencyFormat.format(monthData.summary.totalSavings)}',
-                          style: TextStyle(
-                            color: monthData.summary.totalSavings >= 0 ? Colors.green : Colors.red,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildMonthSummaryItem('Income', monthData.summary.totalIncome, Colors.green),
-                        _buildMonthSummaryItem('Expenses', monthData.summary.totalExpenses, Colors.red),
-                        _buildMonthSummaryItem('Transactions', monthData.summary.transactionCount.toDouble(), Colors.grey),
-                      ],
-                    ),
-                  ],
-                ),
+                  const SizedBox(height: 16),
+                  if (_filePath != null && !_isLoading) // Hide path when loading/no file
+                    Text('Selected file: ${_filePath!.split('/').last}') // Show only filename
+                  else if (!_isLoading)
+                    const Text('No file selected yet.'),
+                  const SizedBox(height: 24),
+                ],
               ),
-            );
-          }).toList().reversed.toList(), // Show the most recent months first
-      ],
-    );
-  }
-
-  Widget _buildSummaryRow(String label, double value, Color color) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(fontSize: 16),
-          ),
-          Text(
-            label == 'Transactions' ? value.toInt().toString() : currencyFormat.format(value),
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: color,
             ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildMonthSummaryItem(String label, double value, Color color) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-        Text(
-          label == 'Transactions' ? value.toInt().toString() : currencyFormat.format(value),
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.bold,
-            color: color,
+      // Debug button in a floating action button
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          // Debug Integrity Check button
+          FloatingActionButton(
+        mini: true,
+            heroTag: "integrityCheck",
+            backgroundColor: Colors.green,
+            child: const Icon(Icons.check_circle),
+            onPressed: _checkDataIntegrity,
           ),
-        ),
-      ],
+          const SizedBox(width: 8),
+          // Debug Archive Test button
+          FloatingActionButton(
+            mini: true,
+            heroTag: "archiveTest",
+            backgroundColor: Colors.amber,
+            child: const Icon(Icons.archive),
+            onPressed: _createTestDataForArchiving,
+          ),
+          const SizedBox(width: 8),
+          // Bank mapping validation button
+          FloatingActionButton(
+            heroTag: "validateBtn",
+            backgroundColor: Colors.amber,
+            child: const Icon(Icons.health_and_safety),
+            onPressed: _showBankValidationDialog,
+            mini: true,
+          ),
+          const SizedBox(width: 8),
+          // Debug button
+          FloatingActionButton(
+            heroTag: "debugBtn",
+            backgroundColor: Colors.purple,
+            onPressed: _showDebugDialog,
+            mini: true,
+            child: const Icon(Icons.developer_mode),
+          ),
+        ],
+      ),
     );
   }
 
@@ -919,22 +832,22 @@ class _HomeScreenState extends State<HomeScreen> {
     int semicolonCount = ';'.allMatches(headerLine).length;
     // int tabCount = '\t'.allMatches(headerLine).length; // Can add later if needed
 
-    print('[HomeScreen _detectDelimiter] Comma count: $commaCount, Semicolon count: $semicolonCount');
+    print('[DataUploadScreen _detectDelimiter] Comma count: $commaCount, Semicolon count: $semicolonCount');
 
     // Prioritize semicolon if it's present and appears at least as often as comma
     if (semicolonCount > 0 && semicolonCount >= commaCount) {
-      print('[HomeScreen _detectDelimiter] Returning Semicolon');
+      print('[DataUploadScreen _detectDelimiter] Returning Semicolon');
       return ';';
     }
 
     // Add check for tab if needed:
     // if (tabCount > 0 && tabCount >= commaCount && tabCount >= semicolonCount) {
-    //    print('[HomeScreen _detectDelimiter] Returning Tab');
+    //    print('[DataUploadScreen _detectDelimiter] Returning Tab');
     //    return '\t';
     // }
 
     // Otherwise, default to comma
-    print('[HomeScreen _detectDelimiter] Returning Comma (default)');
+    print('[DataUploadScreen _detectDelimiter] Returning Comma (default)');
     return ',';
   }
   // *****************************************************
