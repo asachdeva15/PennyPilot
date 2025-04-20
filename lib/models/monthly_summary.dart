@@ -40,6 +40,89 @@ class MonthlySummary with _$MonthlySummary {
   );
 }
 
+/// Extended MonthlyTransactionSummary class for UI display and summary data
+class MonthlyTransactionSummary {
+  final int year;
+  final int month;
+  final double totalIncome;
+  final double totalExpenses;
+  final double totalSavings;
+  final Map<String, double> categoryBreakdown;
+  final int transactionCount;
+  final DateTime generatedAt;
+  final List<TopExpenseCategory> topExpenseCategories;
+
+  MonthlyTransactionSummary({
+    required this.year,
+    required this.month,
+    required this.totalIncome,
+    required this.totalExpenses,
+    required this.totalSavings,
+    required this.categoryBreakdown,
+    required this.transactionCount,
+    required this.generatedAt,
+    required this.topExpenseCategories,
+  });
+
+  /// Convert to MonthlySummary for data storage
+  MonthlySummary toMonthlyData() {
+    return MonthlySummary(
+      year: year,
+      month: month,
+      totalIncome: totalIncome,
+      totalExpenses: totalExpenses,
+      totalSavings: totalSavings,
+      categoryTotals: Map<String, double>.from(categoryBreakdown),
+      transactionCount: transactionCount,
+    );
+  }
+  
+  /// Create an empty summary with zeros
+  factory MonthlyTransactionSummary.empty(int year, int month) => MonthlyTransactionSummary(
+    year: year,
+    month: month,
+    totalIncome: 0,
+    totalExpenses: 0,
+    totalSavings: 0,
+    categoryBreakdown: {},
+    transactionCount: 0,
+    generatedAt: DateTime.now(),
+    topExpenseCategories: [],
+  );
+  
+  /// Create from JSON map
+  factory MonthlyTransactionSummary.fromJson(Map<String, dynamic> json) {
+    return MonthlyTransactionSummary(
+      year: json['year'] as int,
+      month: json['month'] as int,
+      totalIncome: json['totalIncome'] as double,
+      totalExpenses: json['totalExpenses'] as double,
+      totalSavings: json['totalSavings'] as double,
+      categoryBreakdown: Map<String, double>.from(json['categoryBreakdown'] as Map),
+      transactionCount: json['transactionCount'] as int,
+      generatedAt: DateTime.parse(json['generatedAt'] as String),
+      topExpenseCategories: (json['topExpenseCategories'] as List)
+          .map((e) => TopExpenseCategory.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+  
+  /// Convert to JSON map
+  Map<String, dynamic> toJson() {
+    return {
+      'year': year,
+      'month': month,
+      'totalIncome': totalIncome,
+      'totalExpenses': totalExpenses,
+      'totalSavings': totalSavings,
+      'categoryBreakdown': categoryBreakdown,
+      'transactionCount': transactionCount,
+      'generatedAt': generatedAt.toIso8601String(),
+      'topExpenseCategories': topExpenseCategories.map((e) => e.toJson()).toList(),
+    };
+  }
+}
+
 /// We're not using freezed for now to make the tests pass
 class TopExpenseCategory {
   final String category;

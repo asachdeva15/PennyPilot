@@ -375,4 +375,162 @@ class YearlyFileService {
       return false;
     }
   }
+  
+  // Helper methods for repair operations
+  
+  // Get the File object for a yearly data file
+  Future<File> _getYearlyFile(int year) async {
+    return File(_getYearlyFilePath(year));
+  }
+  
+  // Get the File object for a monthly data file
+  Future<File> _getMonthlyFile(int year, int month) async {
+    final monthStr = month.toString().padLeft(2, '0');
+    return File('${_baseDirectory!.path}/month_${year}_$monthStr.json');
+  }
+  
+  // Read yearly data from file
+  Future<YearlyData?> readYearlyData(int year) async {
+    try {
+      final file = await _getYearlyFile(year);
+      if (await file.exists()) {
+        final contents = await file.readAsString();
+        final json = jsonDecode(contents) as Map<String, dynamic>;
+        return YearlyData.fromJson(json);
+      }
+      return null;
+    } catch (e) {
+      print('Error reading yearly data: $e');
+      return null;
+    }
+  }
+  
+  // Read monthly data from file
+  Future<MonthlyData?> _readMonthlyData(int year, int month) async {
+    try {
+      final file = await _getMonthlyFile(year, month);
+      if (await file.exists()) {
+        final contents = await file.readAsString();
+        final json = jsonDecode(contents) as Map<String, dynamic>;
+        return MonthlyData.fromJson(json);
+      }
+      return null;
+    } catch (e) {
+      print('Error reading monthly data: $e');
+      return null;
+    }
+  }
+  
+  // Write yearly data to file
+  Future<bool> _writeYearlyData(YearlyData data) async {
+    try {
+      final file = await _getYearlyFile(data.year);
+      final jsonString = jsonEncode(data.toJson());
+      await file.writeAsString(jsonString, flush: true);
+      return true;
+    } catch (e) {
+      print('Error writing yearly data: $e');
+      return false;
+    }
+  }
+  
+  Future<bool> verifyYearlyData(int year) async {
+    try {
+      final yearlyFile = await _getYearlyFile(year);
+      
+      // If the yearly file doesn't exist, create empty yearly data
+      if (!await yearlyFile.exists()) {
+        final emptyYearlyData = YearlyData.empty(year);
+        await _writeYearlyData(emptyYearlyData);
+        return true;
+      }
+      
+      final yearlyData = await readYearlyData(year);
+      if (yearlyData == null) {
+        return false;
+      }
+      
+      // Verify each month in the yearly data
+      final months = yearlyData.months.keys.toList();
+      for (final monthStr in months) {
+        final month = int.tryParse(monthStr.toString());
+        if (month == null) continue;
+        
+        final monthlyFile = await _getMonthlyFile(year, month);
+        if (!await monthlyFile.exists()) {
+          return false; // Monthly file is missing
+        }
+      }
+      
+      return true;
+    } catch (e) {
+      print('Error verifying yearly data: $e');
+      return false;
+    }
+  }
+  
+  Future<Map<String, dynamic>> repairYearlyData(int year) async {
+    try {
+      final yearlyFile = await _getYearlyFile(year);
+      
+      // Create empty yearly data if it doesn't exist
+      if (!await yearlyFile.exists()) {
+        final emptyYearlyData = YearlyData.empty(year);
+        await _writeYearlyData(emptyYearlyData);
+        return {
+          'success': true,
+          'message': 'Created new yearly data file for $year',
+          'created': true
+        };
+      }
+      
+      // Read existing yearly data
+      final yearlyData = await readYearlyData(year);
+      if (yearlyData == null) {
+        return {
+          'success': false,
+          'message': 'Failed to read yearly data for $year'
+        };
+      }
+      
+      // Get all months that have data files
+      final List<int> availableMonths = [];
+      for (int month = 1; month <= 12; month++) {
+        final monthlyFile = await _getMonthlyFile(year, month);
+        if (await monthlyFile.exists()) {
+          availableMonths.add(month);
+        }
+      }
+      
+      // Update yearly data with all available monthly data
+      var updatedYearlyData = yearlyData;
+      bool anyUpdates = false;
+      
+      for (final month in availableMonths) {
+        final monthlyData = await _readMonthlyData(year, month);
+        if (monthlyData != null) {
+          updatedYearlyData = updatedYearlyData.updateMonth(month, monthlyData);
+          anyUpdates = true;
+        }
+      }
+      
+      // Recalculate summary
+      updatedYearlyData = updatedYearlyData.recalculateSummary(updatedYearlyData.months);
+      
+      // Save the updated yearly data
+      await _writeYearlyData(updatedYearlyData);
+      
+      return {
+        'success': true,
+        'message': anyUpdates ? 'Successfully repaired yearly data for $year' : 'No repairs needed for $year',
+        'updated': anyUpdates
+      };
+    } catch (e) {
+      print('Error repairing yearly data: $e');
+      return {
+        'success': false,
+        'message': 'Error repairing yearly data: $e'
+      };
+    }
+  }
 } 

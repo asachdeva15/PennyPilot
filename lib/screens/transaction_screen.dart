@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/transaction.dart';
+import '../models/category.dart';
 import '../models/category_mapping.dart';
 import '../services/file_service.dart';
+import '../repositories/file_summary_repository.dart';
+import '../models/monthly_detailed_summary.dart';
 
 class TransactionScreen extends StatefulWidget {
   final List<Transaction> transactions;
@@ -135,7 +139,45 @@ class _TransactionScreenState extends State<TransactionScreen> {
   
   Future<void> _saveTransaction(Transaction transaction) async {
     try {
+      // Save the transaction
       await _fileService.saveTransaction(transaction);
+      
+      // Log to help debug
+      debugPrint('Transaction saved: ${transaction.id}, category: ${transaction.category}');
+      
+      // Get the yearlyData from the YearlyDataRepository to trigger updates
+      try {
+        // Get the year from the transaction
+        final year = transaction.date.year;
+        final month = transaction.date.month;
+        
+        // Update summaries
+        debugPrint('Triggering summary updates for year $year month $month');
+        
+        // Force a regeneration of monthly summary to reflect the new categorization
+        try {
+          // First, load all transactions for this month
+          final allTransactions = await _fileService.loadAllTransactions();
+          final monthTransactions = allTransactions.where(
+            (t) => t.date.year == year && t.date.month == month
+          ).toList();
+          
+          // Create a detailed summary
+          final detailedSummary = MonthlyDetailedSummary.fromTransactions(
+            allTransactions, year, month
+          );
+          
+          // Save to repository to trigger summary updates
+          final summaryRepo = FileSummaryRepository(fileService: _fileService);
+          await summaryRepo.saveMonthlyDetailedSummary(detailedSummary);
+          
+          debugPrint('Monthly and yearly summaries updated for $year-$month');
+        } catch (e) {
+          debugPrint('Error updating summaries: $e');
+        }
+      } catch (e) {
+        debugPrint('Error updating yearly data: $e');
+      }
       
       // Reorganize transactions after saving
       _organizeTransactions();

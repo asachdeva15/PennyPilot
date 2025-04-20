@@ -24,6 +24,27 @@ class YearlyDataRepository {
   /// Save a transaction
   Future<bool> saveTransaction(Transaction transaction) async {
     await _ensureInitialized();
+    
+    // Get existing transactions for the month to check for duplicates
+    final transactionYear = transaction.date.year;
+    final transactionMonth = transaction.date.month;
+    final existingTransactions = await _fileService.getTransactionsForMonth(transactionYear, transactionMonth);
+    
+    // Check for duplicates before saving
+    for (final existingTransaction in existingTransactions) {
+      // Check if it's a duplicate based on date, description, and amount
+      if (existingTransaction.date.day == transaction.date.day &&
+          existingTransaction.date.month == transaction.date.month &&
+          existingTransaction.date.year == transaction.date.year &&
+          existingTransaction.description == transaction.description &&
+          existingTransaction.amount == transaction.amount) {
+        // It's a duplicate, skip saving
+        print('Skipping duplicate transaction: ${transaction.description} on ${transaction.date} for ${transaction.amount}');
+        return true; // Return true as if it succeeded (we're skipping it intentionally)
+      }
+    }
+    
+    // Not a duplicate, proceed with saving
     return await _fileService.addTransaction(transaction);
   }
   
@@ -31,11 +52,45 @@ class YearlyDataRepository {
   Future<bool> saveTransactions(List<Transaction> transactions) async {
     await _ensureInitialized();
     
+    // Get existing transactions for duplicate checking
+    Map<int, List<Transaction>> existingTransactionsByMonth = {};
+    
     bool allSucceeded = true;
     for (final transaction in transactions) {
-      final success = await _fileService.addTransaction(transaction);
-      if (!success) {
-        allSucceeded = false;
+      final transactionYear = transaction.date.year;
+      final transactionMonth = transaction.date.month;
+      
+      // Load existing transactions for this month/year if not already loaded
+      if (!existingTransactionsByMonth.containsKey(transactionMonth)) {
+        existingTransactionsByMonth[transactionMonth] = 
+            await _fileService.getTransactionsForMonth(transactionYear, transactionMonth);
+      }
+      
+      // Check for duplicates
+      bool isDuplicate = false;
+      for (final existingTransaction in existingTransactionsByMonth[transactionMonth]!) {
+        // Check if it's a duplicate based on date, description, and amount
+        if (existingTransaction.date.day == transaction.date.day &&
+            existingTransaction.date.month == transaction.date.month &&
+            existingTransaction.date.year == transaction.date.year &&
+            existingTransaction.description == transaction.description &&
+            existingTransaction.amount == transaction.amount) {
+          isDuplicate = true;
+          print('Skipping duplicate transaction: ${transaction.description} on ${transaction.date} for ${transaction.amount}');
+          break;
+        }
+      }
+      
+      // Only save if not a duplicate
+      if (!isDuplicate) {
+        final success = await _fileService.addTransaction(transaction);
+        
+        if (success) {
+          // Add to our local cache of existing transactions to check against future imports
+          existingTransactionsByMonth[transactionMonth]!.add(transaction);
+        } else {
+          allSucceeded = false;
+        }
       }
     }
     
@@ -69,10 +124,7 @@ class YearlyDataRepository {
   // Private helper to ensure the repository is initialized
   Future<void> _ensureInitialized() async {
     if (!_initialized) {
-      _initialized = await initialize();
-      if (!_initialized) {
-        throw Exception('Failed to initialize repository');
-      }
+      await initialize();
     }
   }
 } 

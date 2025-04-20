@@ -15,6 +15,12 @@ _$YearlyDataImpl _$$YearlyDataImplFromJson(Map<String, dynamic> json) =>
           ) ??
           const {},
       summary: YearlySummary.fromJson(json['summary'] as Map<String, dynamic>),
+      transactionCategories:
+          (json['transactionCategories'] as Map<String, dynamic>?)?.map(
+                (k, e) => MapEntry(
+                    k, (e as List<dynamic>).map((e) => e as String).toSet()),
+              ) ??
+              const {},
     );
 
 Map<String, dynamic> _$$YearlyDataImplToJson(_$YearlyDataImpl instance) =>
@@ -22,4 +28,6 @@ Map<String, dynamic> _$$YearlyDataImplToJson(_$YearlyDataImpl instance) =>
       'year': instance.year,
       'months': instance.months.map((k, e) => MapEntry(k.toString(), e)),
       'summary': instance.summary,
+      'transactionCategories':
+          instance.transactionCategories.map((k, e) => MapEntry(k, e.toList())),
     };

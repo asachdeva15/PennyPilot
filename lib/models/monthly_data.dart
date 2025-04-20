@@ -59,18 +59,49 @@ class MonthlyData with _$MonthlyData {
     // Process each transaction
     for (final transaction in transactions) {
       final amount = transaction.amount;
+      final description = transaction.description;
       
-      // Income is positive, expenses are negative
-      if (amount > 0) {
-        totalIncome += amount;
+      // Special handling for Deutsche Bank where amounts are all positive
+      if (transaction.bankName == "Deutsche Bank") {
+        // Check description to determine if it's income or expense
+        if (description.contains("SEPA-Credit") || 
+            description.contains("SALA Lohn/Gehalt") ||
+            description.toLowerCase().contains("income") ||
+            description.toLowerCase().contains("salary") ||
+            description.toLowerCase().contains("gehalt")) {
+          // This is income
+          totalIncome += amount;
+        } else {
+          // This is an expense
+          totalExpenses += amount;
+        }
       } else {
-        totalExpenses += amount.abs();
+        // For other banks, use sign - income is positive, expenses are negative
+        if (amount > 0) {
+          totalIncome += amount;
+        } else {
+          totalExpenses += amount.abs();
+        }
       }
       
       // Group by category
       final category = transaction.category ?? 'Uncategorized';
-      categoryTotals[category] = (categoryTotals[category] ?? 0) + 
-          (amount < 0 ? amount.abs() : 0); // Only expense categories
+      
+      // For Deutsche Bank, add to category totals if expense
+      if (transaction.bankName == "Deutsche Bank") {
+        if (!description.contains("SEPA-Credit") && 
+            !description.contains("SALA Lohn/Gehalt") && 
+            !description.toLowerCase().contains("income") &&
+            !description.toLowerCase().contains("salary") &&
+            !description.toLowerCase().contains("gehalt")) {
+          categoryTotals[category] = (categoryTotals[category] ?? 0) + amount;
+        }
+      } else {
+        // For other banks, add to category totals if negative amount
+        if (amount < 0) {
+          categoryTotals[category] = (categoryTotals[category] ?? 0) + amount.abs();
+        }
+      }
     }
     
     // Calculate savings (income - expenses)
@@ -81,6 +112,7 @@ class MonthlyData with _$MonthlyData {
       totalExpenses: totalExpenses,
       totalSavings: totalSavings,
       categoryTotals: categoryTotals,
+      transactionCount: transactions.length,
     );
   }
 } 

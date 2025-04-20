@@ -6,10 +6,18 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/bank_mapping.dart'; // Import the model
 import '../models/transaction.dart';
 import '../models/category_mapping.dart';
+import 'package:csv/csv.dart';
+import '../models/monthly_data.dart';
+import '../models/yearly_data.dart';
+import 'file_integrity_service.dart'; // Import our new integrity service
+import 'package:path/path.dart' as path;
 
 class FileService {
   // Store our base directory once we've found a working one
   Directory? _baseDirectory;
+  
+  // File integrity service instance
+  final FileIntegrityService _integrityService = FileIntegrityService();
   
   // --- Directory Paths ---
 
@@ -290,9 +298,16 @@ class FileService {
   Future<void> saveBankMapping(BankMapping mapping) async {
     try {
       final file = await getBankMappingFile(mapping.bankName);
-      final jsonString = jsonEncode(mapping.toJson()); // Use generated toJson
-      await file.writeAsString(jsonString);
-      print('Mapping saved to: ${file.path}');
+      final jsonData = mapping.toJson(); // Use generated toJson
+      
+      // Use safe write with integrity validation
+      final success = await _integrityService.safeWriteJson(file, jsonData);
+      
+      if (success) {
+        print('Mapping saved to: ${file.path}');
+      } else {
+        throw Exception('Failed to safely write bank mapping');
+      }
     } catch (e) {
       print('Error saving bank mapping: $e');
       // Rethrow or handle as needed
@@ -304,8 +319,13 @@ class FileService {
     try {
       final file = await getBankMappingFile(bankName);
       if (await file.exists()) {
-        final jsonString = await file.readAsString();
-        final jsonMap = jsonDecode(jsonString) as Map<String, dynamic>;
+        // Use safe read with validation
+        final jsonMap = await _integrityService.safeReadJson(file);
+        
+        if (jsonMap == null) {
+          print('Could not safely read bank mapping for $bankName');
+          return null;
+        }
         
         // Fix for compatibility with old DateFormatType enum format
         if (jsonMap.containsKey('dateFormatType') && jsonMap['dateFormatType'] != null) {
@@ -466,12 +486,12 @@ class FileService {
   
   Future<void> saveTransaction(Transaction transaction) async {
     try {
-      // Save individual transaction file
+      // Save the transaction file
       final file = await getTransactionFile(transaction.id);
       final jsonString = jsonEncode(transaction.toJson());
       await file.writeAsString(jsonString);
       
-      // Update transaction index
+      // Update the transaction index
       final indexFile = await getTransactionIndexFile();
       Map<String, dynamic> index = {};
       
@@ -480,21 +500,277 @@ class FileService {
         index = jsonDecode(indexString) as Map<String, dynamic>;
       }
       
-      // Add/update transaction in index
+      // Add to index with timestamp
       index[transaction.id] = {
-        'date': transaction.date.toIso8601String(),
-        'amount': transaction.amount,
-        'description': transaction.description.substring(0, 
-          transaction.description.length > 30 ? 30 : transaction.description.length),
-        'category': transaction.category,
-        'subcategory': transaction.subcategory,
+        'year': transaction.date.year,
+        'month': transaction.date.month,
+        'categorySet': transaction.category != null,
+        'timestamp': DateTime.now().toIso8601String(),
       };
       
       await indexFile.writeAsString(jsonEncode(index));
+      
+      // Update the yearly data file if this is an existing transaction
+      final year = transaction.date.year;
+      final month = transaction.date.month;
+      
+      // Update the current month's data if this transaction is from the current month
+      final now = DateTime.now();
+      if (year == now.year && month == now.month) {
+        await _updateCurrentMonthTransaction(transaction);
+      }
+      
+      // Update yearly data 
+      await _updateYearlyDataForTransaction(transaction);
+      
+      print('Transaction ${transaction.id} saved successfully');
     } catch (e) {
       print('Error saving transaction: $e');
       rethrow;
     }
+  }
+  
+  /// Updates the current month's data with a new transaction
+  Future<void> _updateCurrentMonthTransaction(Transaction transaction) async {
+    try {
+      final currentMonthFile = await _getCurrentMonthFile();
+      final year = transaction.date.year;
+      final month = transaction.date.month;
+      
+      // Load existing data or create new
+      MonthlyData monthlyData;
+      if (await currentMonthFile.exists()) {
+        final jsonString = await currentMonthFile.readAsString();
+        final jsonMap = jsonDecode(jsonString) as Map<String, dynamic>;
+        monthlyData = MonthlyData.fromJson(jsonMap);
+      } else {
+        monthlyData = MonthlyData.empty(year, month);
+      }
+      
+      // Check if transaction already exists, replace it or add it
+      final existingIndex = monthlyData.transactions.indexWhere((t) => t.id == transaction.id);
+      if (existingIndex >= 0) {
+        // Replace the transaction
+        final updatedTransactions = List<Transaction>.from(monthlyData.transactions);
+        updatedTransactions[existingIndex] = transaction;
+        monthlyData = monthlyData.updateTransactions(updatedTransactions);
+      } else {
+        // Add new transaction
+        monthlyData = monthlyData.addTransaction(transaction);
+      }
+      
+      // Save updated data
+      final jsonString = jsonEncode(monthlyData.toJson());
+      await currentMonthFile.writeAsString(jsonString);
+    } catch (e) {
+      print('Error updating current month data: $e');
+      // Continue with other updates even if this fails
+    }
+  }
+  
+  /// Updates the yearly data file with a transaction
+  Future<void> _updateYearlyDataForTransaction(Transaction transaction) async {
+    try {
+      final year = transaction.date.year;
+      final month = transaction.date.month;
+      
+      // Get the yearly data file
+      final file = await _getYearlyDataFile(year);
+      
+      // Load existing data or create new
+      YearlyData yearlyData;
+      if (await file.exists()) {
+        // Use safe read with validation
+        final jsonMap = await _integrityService.safeReadJson(file);
+        
+        if (jsonMap != null) {
+          yearlyData = YearlyData.fromJson(jsonMap);
+        } else {
+          // If read fails, create new data
+          yearlyData = YearlyData.empty(year);
+        }
+      } else {
+        yearlyData = YearlyData.empty(year);
+      }
+      
+      // Get the monthly data
+      MonthlyData monthlyData = yearlyData.getMonth(month);
+      
+      // Check if transaction already exists, replace it or add it
+      final existingIndex = monthlyData.transactions.indexWhere((t) => t.id == transaction.id);
+      if (existingIndex >= 0) {
+        // Replace the transaction
+        final updatedTransactions = List<Transaction>.from(monthlyData.transactions);
+        updatedTransactions[existingIndex] = transaction;
+        monthlyData = monthlyData.updateTransactions(updatedTransactions);
+      } else {
+        // Add new transaction
+        monthlyData = monthlyData.addTransaction(transaction);
+      }
+      
+      // Update the month in yearly data
+      yearlyData = yearlyData.updateMonth(month, monthlyData);
+      
+      // Save updated yearly data using safe write
+      final jsonData = yearlyData.toJson();
+      final success = await _integrityService.safeWriteJson(file, jsonData);
+      
+      if (!success) {
+        print('Warning: Failed to safely write yearly data for year $year');
+      }
+    } catch (e) {
+      print('Error updating yearly data: $e');
+      // Continue with other operations even if this fails
+    }
+  }
+  
+  /// Verify data consistency between yearly and monthly files
+  Future<Map<String, dynamic>> verifyDataConsistency(int year) async {
+    try {
+      // Get the yearly file
+      final yearlyFile = await _getYearlyDataFile(year);
+      
+      // Check if yearly file exists
+      if (!await yearlyFile.exists()) {
+        return {'error': 'Yearly data file does not exist for $year', 'missingYearlyFile': true, 'year': year};
+      }
+      
+      // Read yearly data
+      final yearlyJsonMap = await _integrityService.safeReadJson(yearlyFile);
+      if (yearlyJsonMap == null) {
+        return {'error': 'Failed to read yearly data file for $year', 'year': year};
+      }
+      
+      // Get all monthly files for this year
+      final dir = await _dataDirectory;
+      final directory = Directory(dir.path);
+      final files = await directory
+        .list()
+        .where((entity) => 
+          entity is File && 
+          entity.path.contains('month_${year}_') && 
+          entity.path.endsWith('.json') &&
+          !entity.path.contains('backup')
+        )
+        .toList();
+        
+      final monthlyData = <Map<String, dynamic>>[];
+      
+      for (var entity in files) {
+        final file = entity as File;
+        final jsonMap = await _integrityService.safeReadJson(file);
+        if (jsonMap != null) {
+          monthlyData.add(jsonMap);
+        }
+      }
+      
+      // Verify consistency
+      final result = _integrityService.verifyDataConsistency(
+        yearlyJsonMap, 
+        monthlyData
+      );
+      
+      // Add year information to the result
+      result['year'] = year;
+      return result;
+    } catch (e) {
+      print('Error verifying data consistency for year $year: $e');
+      return {'error': 'Error checking data for year $year: ${e.toString()}', 'year': year};
+    }
+  }
+  
+  /// Repair yearly data by reconstructing it from monthly files
+  Future<Map<String, dynamic>> repairYearlyData(int year) async {
+    try {
+      // Get the yearly file
+      final yearlyFile = await _getYearlyDataFile(year);
+      
+      // Backup existing yearly file if it exists
+      if (await yearlyFile.exists()) {
+        final backupFile = File('${yearlyFile.path}.backup.${DateTime.now().millisecondsSinceEpoch}');
+        await yearlyFile.copy(backupFile.path);
+        print('Backed up yearly file to ${backupFile.path}');
+      }
+      
+      // Get all monthly files for this year
+      final dir = await _dataDirectory;
+      final directory = Directory(dir.path);
+      final monthlyFiles = await directory
+        .list()
+        .where((entity) => 
+          entity is File && 
+          entity.path.contains('month_${year}_') && 
+          entity.path.endsWith('.json') &&
+          !entity.path.contains('backup')
+        )
+        .toList();
+      
+      // If no monthly files, create an empty yearly structure
+      if (monthlyFiles.isEmpty) {
+        final emptyYearlyData = YearlyData.empty(year);
+        await _writeJson(yearlyFile, emptyYearlyData.toJson());
+        return {'success': true, 'message': 'Created empty yearly data for $year as no monthly files were found', 'year': year};
+      }
+      
+      // Start with empty yearly data
+      YearlyData yearlyData = YearlyData.empty(year);
+      
+      // Read each monthly file and add to yearly data
+      for (var entity in monthlyFiles) {
+        try {
+          final file = entity as File;
+          final jsonMap = await _integrityService.safeReadJson(file);
+          
+          if (jsonMap != null) {
+            // Extract month number from filename
+            final fileNameOnly = path.basename(file.path);
+            final monthMatch = RegExp(r'month_\d{4}_(\d{2})').firstMatch(fileNameOnly);
+            
+            if (monthMatch != null) {
+              final monthStr = monthMatch.group(1);
+              if (monthStr != null) {
+                final month = int.parse(monthStr);
+                
+                // Convert to MonthlyData
+                final monthlyData = MonthlyData.fromJson(jsonMap);
+                
+                // Update yearly data with this month
+                yearlyData = yearlyData.updateMonth(month, monthlyData);
+              }
+            }
+          }
+        } catch (e) {
+          print('Error processing monthly file ${entity.path}: $e');
+        }
+      }
+      
+      // Recalculate summary if we have monthly data
+      if (yearlyData.months.isNotEmpty) {
+        yearlyData = yearlyData.recalculateSummary(yearlyData.months);
+      }
+      
+      // Write the repaired yearly data back to file
+      await _writeJson(yearlyFile, yearlyData.toJson());
+      
+      return {
+        'success': true, 
+        'message': 'Successfully repaired yearly data for $year from ${yearlyData.months.length} monthly files', 
+        'year': year
+      };
+    } catch (e) {
+      print('Error repairing yearly data for $year: $e');
+      return {'error': 'Error repairing data for year $year: ${e.toString()}', 'year': year};
+    }
+  }
+  
+  Future<File> _getCurrentMonthFile() async {
+    final dir = await _dataDirectory;
+    return File('${dir.path}/current_month.json');
+  }
+  
+  Future<File> _getYearlyDataFile(int year) async {
+    final dir = await _dataDirectory;
+    return File('${dir.path}/$year.json');
   }
   
   Future<Transaction?> loadTransaction(String id) async {
@@ -691,6 +967,279 @@ class FileService {
       }
     } catch (e) {
       print('DEBUG: Error in debugLogAllBankMappings: $e');
+    }
+  }
+
+  // --- CSV Processing Methods ---
+  
+  /// Parse a CSV file and return the rows
+  Future<List<List<dynamic>>> parseCSV(File file) async {
+    try {
+      // Use latin1 encoding to match the processCSVFile method
+      final String csvString = await file.readAsString(encoding: latin1);
+      
+      // Initial parse with comma as delimiter (will be refined later)
+      final List<List<dynamic>> rows = const CsvToListConverter(
+        shouldParseNumbers: false,
+        eol: '\n',
+      ).convert(csvString);
+      
+      return rows;
+    } catch (e) {
+      print('Error parsing CSV file: $e');
+      return [];
+    }
+  }
+  
+  /// Process a CSV file using a bank mapping and return the transactions
+  Future<List<Transaction>> processCSVFile(
+    File file,
+    String? bankName,
+    BankMapping? mapping,
+  ) async {
+    try {
+      if (bankName == null || mapping == null) {
+        // Log the issue but continue with default values
+        print('Warning: Bank name or mapping is null. Using defaults.');
+        bankName = bankName ?? "Unknown Bank";
+        
+        if (mapping == null) {
+          // Create a simple default mapping with some assumptions
+          // This may not work for all CSVs but gives a fallback
+          mapping = BankMapping(
+            bankName: bankName,
+            headerRowIndex: 0,
+            dateColumn: "Date",
+            descriptionColumn: "Description",
+            amountColumn: "Amount",
+            delimiter: ",",
+            dateFormatType: DateFormatType.iso,
+            amountMappingType: AmountMappingType.single
+          );
+          
+          print('Created default mapping for ${bankName}');
+        }
+      }
+      
+      // Read the file
+      final String csvString = await file.readAsString(encoding: latin1);
+      
+      // Parse the CSV with correct delimiter
+      final String delimiter = mapping.delimiter ?? ',';
+      final List<List<dynamic>> rows = CsvToListConverter(
+        shouldParseNumbers: false,
+        eol: '\n',
+        fieldDelimiter: delimiter,
+      ).convert(csvString);
+      
+      if (rows.isEmpty) {
+        print('No rows found in CSV file');
+        return [];
+      }
+      
+      // Get header row (ensure index is valid)
+      final headerRowIndex = mapping.headerRowIndex < rows.length ? mapping.headerRowIndex : 0;
+      final headerRow = rows[headerRowIndex];
+      
+      // Create a map of column names to indices
+      Map<String, int> columnMap = {};
+      for (int i = 0; i < headerRow.length; i++) {
+        columnMap[headerRow[i].toString()] = i;
+      }
+      
+      // Extract transactions based on the mapping
+      List<Transaction> transactions = [];
+      
+      // Process each data row (skip header)
+      for (int i = headerRowIndex + 1; i < rows.length; i++) {
+        final dataRow = rows[i];
+        
+        // Skip rows that don't have enough columns
+        if (dataRow.length < headerRow.length) continue;
+        
+        // Create a map of column names to values for this row
+        Map<String, dynamic> rowData = {};
+        for (String columnName in columnMap.keys) {
+          final index = columnMap[columnName];
+          if (index != null && index < dataRow.length) {
+            rowData[columnName] = dataRow[index];
+          }
+        }
+        
+        // Map the columns according to the bank mapping
+        Map<String, dynamic> transactionData = {};
+        
+        // Map date column
+        if (mapping.dateColumn != null && rowData.containsKey(mapping.dateColumn)) {
+          transactionData['date'] = rowData[mapping.dateColumn];
+        }
+        
+        // Map description column
+        if (mapping.descriptionColumn != null && rowData.containsKey(mapping.descriptionColumn)) {
+          transactionData['description'] = rowData[mapping.descriptionColumn];
+        }
+        
+        // Map amount columns based on mapping type
+        if (mapping.amountMappingType == AmountMappingType.single) {
+          // Single amount column
+          if (mapping.amountColumn != null && rowData.containsKey(mapping.amountColumn)) {
+            transactionData['amount'] = rowData[mapping.amountColumn];
+          }
+        } else {
+          // Separate debit/credit columns
+          if (mapping.debitColumn != null && rowData.containsKey(mapping.debitColumn)) {
+            transactionData['debit'] = rowData[mapping.debitColumn];
+          }
+          if (mapping.creditColumn != null && rowData.containsKey(mapping.creditColumn)) {
+            transactionData['credit'] = rowData[mapping.creditColumn];
+          }
+        }
+        
+        // Create transaction
+        try {
+          final transaction = Transaction.fromCsvRow(
+            transactionData, 
+            bankName,
+            dateFormatType: mapping.dateFormatType ?? DateFormatType.iso
+          );
+          transactions.add(transaction);
+        } catch (e) {
+          print('Error creating transaction from row: $e');
+          // Skip this row and continue
+        }
+      }
+      
+      return transactions;
+    } catch (e) {
+      print('Error processing CSV file: $e');
+      return [];
+    }
+  }
+  
+  /// Detect delimiter from a header line
+  String _detectDelimiter(String headerLine) {
+    // Count occurrences of common delimiters
+    final commaCount = ','.allMatches(headerLine).length;
+    final semicolonCount = ';'.allMatches(headerLine).length;
+    final tabCount = '\t'.allMatches(headerLine).length;
+    
+    // Return the most common delimiter
+    if (semicolonCount > commaCount && semicolonCount > tabCount) {
+      return ';';
+    } else if (tabCount > commaCount && tabCount > semicolonCount) {
+      return '\t';
+    } else {
+      return ','; // Default to comma
+    }
+  }
+
+  // --- Current Month Data Methods ---
+  
+  /// Get the current month data file
+  Future<File> getCurrentMonthFile() async {
+    final dataDir = await _dataDirectory;
+    return File('${dataDir.path}/current_month.json');
+  }
+  
+  /// Initialize or get current month data file
+  Future<File> initializeCurrentMonthFile() async {
+    final file = await getCurrentMonthFile();
+    
+    // If file doesn't exist, create it with empty structure
+    if (!await file.exists()) {
+      final now = DateTime.now();
+      final emptyData = {
+        'month': now.month,
+        'year': now.year,
+        'transactions': [],
+        'lastUpdated': now.toIso8601String(),
+      };
+      
+      // Use safe write for initialization
+      await _integrityService.safeWriteJson(file, emptyData);
+    }
+    
+    return file;
+  }
+  
+  /// Save transactions to current month file
+  Future<bool> saveTransactionsToCurrentMonth(List<Transaction> transactions) async {
+    try {
+      // Initialize the file if it doesn't exist
+      final file = await initializeCurrentMonthFile();
+      
+      // Read existing data safely
+      final data = await _integrityService.safeReadJson(file);
+      
+      if (data == null) {
+        print('Error reading current month data');
+        return false;
+      }
+      
+      // Get existing transactions
+      List<dynamic> existingTransactions = data['transactions'] as List? ?? [];
+      
+      // Add new transactions
+      final allTransactions = [
+        ...existingTransactions,
+        ...transactions.map((t) => t.toJson()),
+      ];
+      
+      // Update the data
+      final now = DateTime.now();
+      final updatedData = {
+        'month': now.month,
+        'year': now.year,
+        'transactions': allTransactions,
+        'lastUpdated': now.toIso8601String(),
+      };
+      
+      // Write back to file safely
+      return await _integrityService.safeWriteJson(file, updatedData);
+    } catch (e) {
+      print('Error saving transactions to current month: $e');
+      return false;
+    }
+  }
+  
+  /// Get transactions from current month file
+  Future<List<Transaction>> getCurrentMonthTransactions() async {
+    try {
+      final file = await getCurrentMonthFile();
+      
+      if (!await file.exists()) {
+        return [];
+      }
+      
+      // Read safely with validation
+      final data = await _integrityService.safeReadJson(file);
+      
+      if (data == null) {
+        print('Error reading current month data');
+        return [];
+      }
+      
+      // Extract transactions
+      final transactionsList = data['transactions'] as List? ?? [];
+      
+      return transactionsList
+          .map((t) => Transaction.fromJson(t as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      print('Error getting current month transactions: $e');
+      return [];
+    }
+  }
+
+  /// Write JSON data to a file with error handling
+  Future<bool> _writeJson(File file, Map<String, dynamic> jsonData) async {
+    try {
+      final jsonString = jsonEncode(jsonData);
+      await file.writeAsString(jsonString, flush: true);
+      return true;
+    } catch (e) {
+      print('Error writing JSON to ${file.path}: $e');
+      return false;
     }
   }
 } 

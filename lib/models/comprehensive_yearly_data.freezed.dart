@@ -146,13 +146,11 @@ class __$$ComprehensiveYearlyDataImplCopyWithImpl<$Res>
 
 /// @nodoc
 @JsonSerializable()
-class _$ComprehensiveYearlyDataImpl
-    with DiagnosticableTreeMixin
-    implements _ComprehensiveYearlyData {
+class _$ComprehensiveYearlyDataImpl extends _ComprehensiveYearlyData
+    with DiagnosticableTreeMixin {
   const _$ComprehensiveYearlyDataImpl(
-      {required this.year,
-      required this.yearlyData,
-      required this.generatedAt});
+      {required this.year, required this.yearlyData, required this.generatedAt})
+      : super._();
 
   factory _$ComprehensiveYearlyDataImpl.fromJson(Map<String, dynamic> json) =>
       _$$ComprehensiveYearlyDataImplFromJson(json);
@@ -212,11 +210,12 @@ class _$ComprehensiveYearlyDataImpl
   }
 }
 
-abstract class _ComprehensiveYearlyData implements ComprehensiveYearlyData {
+abstract class _ComprehensiveYearlyData extends ComprehensiveYearlyData {
   const factory _ComprehensiveYearlyData(
       {required final int year,
       required final YearlyData yearlyData,
       required final DateTime generatedAt}) = _$ComprehensiveYearlyDataImpl;
+  const _ComprehensiveYearlyData._() : super._();
 
   factory _ComprehensiveYearlyData.fromJson(Map<String, dynamic> json) =
       _$ComprehensiveYearlyDataImpl.fromJson;

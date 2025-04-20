@@ -477,12 +477,18 @@ class _YearlySummaryScreenState extends State<YearlySummaryScreen> {
     final summary = _yearlySummary!;
     final currencyFormat = NumberFormat.currency(symbol: '\$');
     
-    if (summary.yearlyCategories.isEmpty) {
-      return const SizedBox.shrink();
+    if (summary.categoryTotals.isEmpty) {
+      return const Card(
+        elevation: 4,
+        child: Padding(
+          padding: EdgeInsets.all(16.0),
+          child: Text("No categorized transactions available"),
+        ),
+      );
     }
     
     // Sort categories by amount (descending)
-    final sortedCategories = summary.yearlyCategories.entries.toList()
+    final sortedCategories = summary.categoryTotals.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     
     return Card(
@@ -493,7 +499,7 @@ class _YearlySummaryScreenState extends State<YearlySummaryScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'All Categories',
+              'Expenses by Category',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -503,34 +509,70 @@ class _YearlySummaryScreenState extends State<YearlySummaryScreen> {
             ...sortedCategories.map((entry) {
               final categoryName = entry.key;
               final amount = entry.value;
-              final percentage = summary.totalYearlyExpenses > 0
-                  ? (amount / summary.totalYearlyExpenses) * 100
+              final percentage = summary.totalExpenses > 0
+                  ? (amount / summary.totalExpenses) * 100
                   : 0;
               
               return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        categoryName,
-                        overflow: TextOverflow.ellipsis,
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            categoryName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          currencyFormat.format(amount),
+                          style: const TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    LinearProgressIndicator(
+                      value: percentage / 100,
+                      backgroundColor: Colors.grey[200],
+                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.red),
+                    ),
+                    Text(
+                      '${percentage.toStringAsFixed(1)}% of total expenses',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
                       ),
                     ),
-                    Text(
-                      '${percentage.toStringAsFixed(1)}%',
-                      style: TextStyle(color: Colors.grey[600]),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      currencyFormat.format(amount),
-                      style: const TextStyle(color: Colors.red),
-                    ),
+                    if (sortedCategories.last != entry) const Divider(),
                   ],
                 ),
               );
             }).toList(),
+            const Divider(),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.pie_chart),
+              label: const Text('View Detailed Breakdown'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE68A00),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () {
+                // Future enhancement: show detailed category breakdown
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Feature coming in Phase 4'))
+                );
+              },
+            ),
           ],
         ),
       ),

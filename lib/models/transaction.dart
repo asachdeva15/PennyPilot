@@ -55,7 +55,7 @@ class Transaction {
   // Helper factory to create from CSV row data
   factory Transaction.fromCsvRow(
     Map<String, dynamic> rowData, 
-    String bankName, {
+    String? bankName, {
     DateFormatType dateFormatType = DateFormatType.iso,
   }) {
     // Convert data from CSV to a Transaction
@@ -89,7 +89,7 @@ class Transaction {
       date: date,
       description: rowData['description']?.toString() ?? 'No description',
       amount: amount,
-      bankName: bankName,
+      bankName: bankName ?? 'Unknown Bank',
     );
   }
   

@@ -102,10 +102,11 @@ class MonthlyDetailedSummary {
       month: month,
       totalIncome: totalIncome,
       totalExpenses: totalExpenses,
-      netSavings: netSavings,
+      totalSavings: netSavings,
       categoryBreakdown: categoryBreakdown,
-      topExpenseCategories: topExpenseCategories,
+      transactionCount: transactions.length,
       generatedAt: generatedAt,
+      topExpenseCategories: topExpenseCategories,
     );
   }
 

@@ -297,7 +297,13 @@ class _MonthlySummaryScreenState extends State<MonthlySummaryScreen> {
     final currencyFormat = NumberFormat.currency(symbol: '\$');
     
     if (summary.categoryBreakdown.isEmpty) {
-      return const SizedBox.shrink();
+      return const Card(
+        elevation: 4,
+        child: Padding(
+          padding: EdgeInsets.all(16.0),
+          child: Text("No categorized transactions available"),
+        ),
+      );
     }
     
     // Sort categories by amount (descending)
@@ -312,7 +318,7 @@ class _MonthlySummaryScreenState extends State<MonthlySummaryScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'All Categories',
+              'Expenses by Category',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -328,24 +334,40 @@ class _MonthlySummaryScreenState extends State<MonthlySummaryScreen> {
               
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        categoryName,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            categoryName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          '${percentage.toStringAsFixed(1)}%',
+                          style: TextStyle(color: Colors.grey[600]),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          currencyFormat.format(amount),
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                      ],
                     ),
-                    Text(
-                      '${percentage.toStringAsFixed(1)}%',
-                      style: TextStyle(color: Colors.grey[600]),
+                    // Add a progress bar to visualize the percentage
+                    const SizedBox(height: 4),
+                    LinearProgressIndicator(
+                      value: percentage / 100,
+                      backgroundColor: Colors.grey[200],
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      currencyFormat.format(amount),
-                      style: const TextStyle(color: Colors.red),
-                    ),
+                    if (sortedCategories.last != entry) const Divider(),
                   ],
                 ),
               );

@@ -7,10 +7,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:csv/csv.dart'; // Import the csv package
 import 'mapping_screen.dart'; // Import the new mapping screen
 import 'transaction_screen.dart'; // Import the transaction screen
-import '../widgets/csv_preview_dialog.dart'; // Import the dialog
 import '../services/file_service.dart';
 import '../models/transaction.dart'; // Import transaction model
 import '../models/bank_mapping.dart'; // Import bank mapping model
+import '../providers/yearly_data_provider.dart';
+import '../repositories/yearly_data_repository.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -25,6 +26,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _filePath;
   bool _isLoading = false;
   bool _banksLoading = true; // State for loading banks initially
+  String? _errorMessage;
+  BankMapping? _currentMapping; // Add this field for bank mapping
 
   // Instance of FileService
   final FileService _fileService = FileService();
@@ -34,6 +37,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _requestPermissions(); // Request permissions on startup
     _loadBanks(); // Load banks when the screen initializes
+    
+    // Check if current month data needs archiving
+    _checkCurrentMonthData();
   }
 
   // Request all required permissions upfront
@@ -293,10 +299,35 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       // Debug button in a floating action button
-      floatingActionButton: FloatingActionButton(
-        mini: true,
-        child: const Icon(Icons.bug_report),
-        onPressed: _showDebugDialog,
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          // Debug Integrity Check button
+          FloatingActionButton(
+            mini: true,
+            heroTag: "integrityCheck",
+            backgroundColor: Colors.green,
+            child: const Icon(Icons.check_circle),
+            onPressed: _checkDataIntegrity,
+          ),
+          const SizedBox(width: 8),
+          // Debug Archive Test button
+          FloatingActionButton(
+            mini: true,
+            heroTag: "archiveTest",
+            backgroundColor: Colors.amber,
+            child: const Icon(Icons.archive),
+            onPressed: _createTestDataForArchiving,
+          ),
+          const SizedBox(width: 8),
+          // Existing debug button
+          FloatingActionButton(
+            mini: true,
+            heroTag: "debugBtn",
+            child: const Icon(Icons.bug_report),
+            onPressed: _showDebugDialog,
+          ),
+        ],
       ),
     );
   }
@@ -338,7 +369,7 @@ class _HomeScreenState extends State<HomeScreen> {
         });
 
         // --- Add file processing logic here ---
-        await _processSelectedFile(_filePath!);
+        await _processSelectedFile(File(_filePath!));
         // -------------------------------------
 
       } else {
@@ -360,253 +391,364 @@ class _HomeScreenState extends State<HomeScreen> {
           SnackBar(content: Text('Error picking file: $e')),
         );
       }
-    } finally {
-       // Ensure loading indicator stops eventually,
-       // even if _processSelectedFile throws an error not caught below.
-       // Specific error handling is inside _processSelectedFile now.
-       // setState(() { _isLoading = false; }); // Moved inside _processSelectedFile or its catch block
     }
   }
 
   // --- New method to process the file ---
-  Future<void> _processSelectedFile(String path) async {
-    List<List<dynamic>> correctlyParsedRows = []; // To hold the final result
-    bool navigatedAway = false;
-
+  Future<void> _processSelectedFile(File file) async {
     try {
-      final file = File(path);
-      final String csvString = await file.readAsString(encoding: latin1);
+      // Show progress indicator
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+      
+      // If "Other" is selected, show CSV preview and mapping screen
+      if (_selectedBank == "Other") {
+        setState(() {
+          _isLoading = false; // Stop loading indicator while in preview mode
+        });
+        
+        await _showCsvPreviewAndMapping(file);
+        return; // Return early as the flow will continue after mapping
+      }
+      
+      // For known banks, try to load its mapping
+      if (_selectedBank != null) {
+        _currentMapping = await _fileService.loadBankMapping(_selectedBank!);
+      }
+      
+      // Process the file with the loaded mapping
+      print('Processing CSV file: ${file.path}');
+      
+      final List<Transaction> parsedTransactions = await _fileService.processCSVFile(
+        file,
+        _selectedBank,
+        _currentMapping,
+      );
+      
+      print('Parsed ${parsedTransactions.length} transactions from CSV');
+      
+      if (parsedTransactions.isEmpty) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'No valid transactions found in the CSV file.';
+        });
+        
+        // Show error message to the user
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No valid transactions found in the CSV file.')),
+        );
+        return;
+      }
+      
+      // Save transactions using the new yearly data repository
+      final yearlyRepo = YearlyDataRepository();
+      await yearlyRepo.initialize();
+      final bool saveSuccess = await yearlyRepo.saveTransactions(parsedTransactions);
+      
+      if (saveSuccess) {
+        print('Successfully saved ${parsedTransactions.length} transactions to yearly JSON structure');
+      } else {
+        print('Warning: Some transactions may not have been saved to yearly JSON structure');
+      }
+      
+      // Show transaction screen with results
+      if (!mounted) return;
+      
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => TransactionScreen(
+            transactions: parsedTransactions,
+            bankName: _selectedBank ?? "Unknown", // Provide default value for non-nullable field
+          ),
+        ),
+      );
+      
+      setState(() {
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error processing CSV file: $e');
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Error processing file: $e';
+      });
+      
+      // Show error message to the user
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error processing file: $e')),
+      );
+    }
+  }
 
-      // --- Minimal Initial Parse (Just for Row Count/Preview) ---
-      // This helps the dialog know how many rows exist.
-      // Columns might be wrong here if delimiter isn't comma.
-      final List<List<dynamic>> previewRows = const CsvToListConverter(
+  // New method to handle CSV preview and mapping for "Other" bank
+  Future<void> _showCsvPreviewAndMapping(File file) async {
+    try {
+      // Read the file
+      final csvString = await file.readAsString(encoding: latin1);
+      
+      // Detect delimiter
+      final String detectedDelimiter = _detectDelimiter(csvString);
+      print('Detected delimiter: "$detectedDelimiter"');
+      
+      // Parse CSV with detected delimiter
+      final parser = CsvToListConverter(
         shouldParseNumbers: false,
         eol: '\n',
-      ).convert(csvString);
-      print('[HomeScreen _processSelectedFile] Initial parse for preview - rows length: ${previewRows.length}');
-      // -----------------------------------------------------------
-
-      if (previewRows.isEmpty) {
-        throw Exception("CSV file is empty.");
+        fieldDelimiter: detectedDelimiter,
+      );
+      final rows = parser.convert(csvString);
+      
+      if (rows.isEmpty) {
+        _showMessage('CSV file is empty or invalid.');
+        return;
       }
-
-      if (_selectedBank == 'Other' || _selectedBank == null) {
-        print('[HomeScreen _processSelectedFile] Bank is "Other". Showing preview dialog.');
-        navigatedAway = true;
-
-        if (mounted) {
-          // Show the preview dialog
-          final selectedIndex = await showDialog<int?>(
-            context: context,
-            barrierDismissible: false,
-            builder: (BuildContext context) {
-              return CsvPreviewDialog(csvData: previewRows); // Use preview data
-            },
-          );
-
-          if (selectedIndex != null && mounted) {
-            print('[HomeScreen _processSelectedFile] Dialog returned header index: $selectedIndex');
-
-            // --- Detect Delimiter on Selected Header Row ---
-            final List<String> lines = LineSplitter.split(csvString).toList();
-            if (selectedIndex >= lines.length) {
-                 throw Exception("Selected header index out of bounds (lines).");
-            }
-            final String headerLine = lines[selectedIndex];
-            final String detectedDelimiter = _detectDelimiter(headerLine);
-            print('[HomeScreen _processSelectedFile] Detected delimiter: "$detectedDelimiter"');
-            // ---------------------------------------------
-
-            // --- Perform the FINAL PARSE with correct settings ---
-            correctlyParsedRows = CsvToListConverter(
-              shouldParseNumbers: false,
-              eol: '\n', // Ensure row splitting is correct
-              fieldDelimiter: detectedDelimiter, // Use detected column delimiter
-            ).convert(csvString);
-            print('[HomeScreen _processSelectedFile] FINAL parse - rows length: ${correctlyParsedRows.length}');
-
-            if (selectedIndex < correctlyParsedRows.length) {
-               print('[HomeScreen _processSelectedFile] FINAL parsed header row content: ${correctlyParsedRows[selectedIndex]}');
-            } else {
-               print('[HomeScreen _processSelectedFile] Error: selectedIndex out of bounds after FINAL parse.');
-               throw Exception("Header index out of bounds after final parse.");
-            }
-            // --------------------------------------------------
-
-            // Navigate with the DEFINITIVELY parsed data AND delimiter
-            final result = await Navigator.push( // Capture result
-              context,
-              MaterialPageRoute(
-                builder: (context) => MappingScreen(
-                  csvData: correctlyParsedRows,
-                  selectedHeaderRowIndex: selectedIndex,
-                  detectedDelimiter: detectedDelimiter, // *** Pass delimiter ***
-                ),
-              ),
-            );
-            // *** Check result to refresh banks ***
-            if (result == true && mounted) {
-               print("Mapping saved, reloading banks...");
-               _loadBanks(); // Function to refresh bank list
-            }
-            // Always clear file path after attempt
-            setState(() { _filePath = null; });
-          } else {
-            print('[HomeScreen _processSelectedFile] Dialog cancelled or returned null.');
-            setState(() { _filePath = null; });
-          }
-        }
-      } else {
-        // Known bank - process with saved mapping
-        print('Bank "$_selectedBank" selected. Processing with known mapping.');
-        
-        // Debug - show mapping file location and contents
-        try {
-          // Add null check for _selectedBank
-          if (_selectedBank != null) {
-            final mapping = await _fileService.loadBankMapping(_selectedBank!);
-            if (mapping != null) {
-              print('DEBUG: Loaded mapping for $_selectedBank');
-              print('DEBUG: Mapping: ${mapping.toJson()}');
-              
-              // Get the actual file path
-              final file = await _fileService.getBankMappingFile(_selectedBank!);
-              print('DEBUG: Mapping file path: ${file.path}');
-              
-              // --- Parse CSV with the saved mapping information ---
-              final String detectedDelimiter = mapping.delimiter ?? ',';
-              
-              // Parse the CSV with correct delimiter
-              correctlyParsedRows = CsvToListConverter(
-                shouldParseNumbers: false,
-                eol: '\n',
-                fieldDelimiter: detectedDelimiter,
-              ).convert(csvString);
-              
-              // Get header row
-              final headerRow = correctlyParsedRows[mapping.headerRowIndex];
-              
-              // Create a map of column names to indices
-              Map<String, int> columnMap = {};
-              for (int i = 0; i < headerRow.length; i++) {
-                columnMap[headerRow[i].toString()] = i;
-              }
-              
-              // Extract transactions based on the mapping
-              List<Transaction> transactions = [];
-              
-              // Process each data row (skip header)
-              for (int i = mapping.headerRowIndex + 1; i < correctlyParsedRows.length; i++) {
-                final dataRow = correctlyParsedRows[i];
-                
-                // Skip rows that don't have enough columns
-                if (dataRow.length < headerRow.length) continue;
-                
-                // Create a map of column names to values for this row
-                Map<String, dynamic> rowData = {};
-                for (String columnName in columnMap.keys) {
-                  final index = columnMap[columnName];
-                  if (index != null && index < dataRow.length) {
-                    rowData[columnName] = dataRow[index];
-                  }
-                }
-                
-                // Map the columns according to the bank mapping
-                Map<String, dynamic> transactionData = {};
-                
-                // Map date column
-                if (mapping.dateColumn != null && rowData.containsKey(mapping.dateColumn)) {
-                  transactionData['date'] = rowData[mapping.dateColumn];
-                }
-                
-                // Map description column
-                if (mapping.descriptionColumn != null && rowData.containsKey(mapping.descriptionColumn)) {
-                  transactionData['description'] = rowData[mapping.descriptionColumn];
-                }
-                
-                // Map amount columns based on mapping type
-                if (mapping.amountMappingType == AmountMappingType.single) {
-                  // Single amount column
-                  if (mapping.amountColumn != null && rowData.containsKey(mapping.amountColumn)) {
-                    transactionData['amount'] = rowData[mapping.amountColumn];
-                  }
-                } else {
-                  // Separate debit/credit columns
-                  if (mapping.debitColumn != null && rowData.containsKey(mapping.debitColumn)) {
-                    transactionData['debit'] = rowData[mapping.debitColumn];
-                  }
-                  if (mapping.creditColumn != null && rowData.containsKey(mapping.creditColumn)) {
-                    transactionData['credit'] = rowData[mapping.creditColumn];
-                  }
-                }
-                
-                // Create transaction
-                try {
-                  final transaction = Transaction.fromCsvRow(
-                    transactionData, 
-                    _selectedBank!,
-                    dateFormatType: mapping.dateFormatType ?? DateFormatType.iso // Provide a default value
-                  );
-                  transactions.add(transaction);
-                } catch (e) {
-                  print('Error creating transaction from row: $e');
-                  // Skip this row and continue
-                }
-              }
-              
-              print('Parsed ${transactions.length} transactions from CSV');
-              
-              // Navigate to transaction screen
-              navigatedAway = true;
-              if (mounted) {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => TransactionScreen(
-                      transactions: transactions,
-                      bankName: _selectedBank!,
-                    ),
-                  ),
-                );
-                
-                // Clear file path after returning
-                setState(() { _filePath = null; });
-              }
-            } else {
-              print('DEBUG: No mapping found for $_selectedBank!');
-              _showError("No mapping found for selected bank. Please recreate the mapping.");
-            }
-          } else {
-            print('DEBUG: Selected bank is null!');
-            _showError("No bank selected");
-          }
-        } catch (e) {
-          print('DEBUG: Error loading mapping for $_selectedBank: $e');
-          _showError("Error loading bank mapping: $e");
-        }
-      }
-
-    } catch (e) {
-      print('Error processing file: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error processing file: $e')),
-        );
-        setState(() { _isLoading = false; }); // Stop loading on error
-      }
-    } finally {
-      // Stop loading indicator logic remains largely the same
-      if (mounted && !navigatedAway) {
+      
+      // Show dialog to select header row and preview CSV
+      final headerRowIndex = await _showHeaderSelectionDialog(rows);
+      if (headerRowIndex == null) {
+        // User cancelled
         setState(() {
           _isLoading = false;
         });
+        return;
       }
-      if (mounted && navigatedAway) {
+      
+      print('Selected header row index: $headerRowIndex');
+      
+      // Navigate to mapping screen
+      if (!mounted) return;
+      
+      final result = await Navigator.of(context).push<BankMapping>(
+        MaterialPageRoute(
+          builder: (context) => MappingScreen(
+            csvData: rows,
+            selectedHeaderRowIndex: headerRowIndex,
+            detectedDelimiter: detectedDelimiter,
+          ),
+        ),
+      );
+      
+      // If user created a mapping, process the file with it
+      if (result != null) {
+        print('Received bank mapping: ${result.bankName}');
+        
+        setState(() {
+          _isLoading = true; // Start loading again
+        });
+        
+        // Process the file with the new mapping
+        final List<Transaction> parsedTransactions = await _fileService.processCSVFile(
+          file,
+          result.bankName,
+          result,
+        );
+        
+        // Continue with transaction processing
+        if (parsedTransactions.isEmpty) {
+          _showMessage('No valid transactions found in the CSV file.');
           setState(() {
-             _isLoading = false;
+            _isLoading = false;
           });
+          return;
+        }
+        
+        // Save transactions
+        final yearlyRepo = YearlyDataRepository();
+        await yearlyRepo.initialize();
+        await yearlyRepo.saveTransactions(parsedTransactions);
+        
+        // Show transaction screen
+        if (mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => TransactionScreen(
+                transactions: parsedTransactions,
+                bankName: result.bankName,
+              ),
+            ),
+          );
+        }
       }
+      
+      setState(() {
+        _isLoading = false;
+      });
+      
+    } catch (e) {
+      print('Error in CSV preview: $e');
+      _showMessage('Error previewing CSV: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+  
+  // Dialog to select header row
+  Future<int?> _showHeaderSelectionDialog(List<List<dynamic>> rows) async {
+    return showDialog<int>(
+      context: context,
+      builder: (BuildContext context) {
+        int selectedRow = 0; // Default to first row
+        
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Select Header Row'),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: MediaQuery.of(context).size.height * 0.7, // Use 70% of screen height
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Choose which row contains the column headers:'),
+                    const SizedBox(height: 8),
+                    DropdownButton<int>(
+                      value: selectedRow,
+                      isExpanded: true,
+                      items: List.generate(
+                        rows.length > 15 ? 15 : rows.length, // Show up to 15 rows in dropdown
+                        (index) => DropdownMenuItem<int>(
+                          value: index,
+                          child: Text('Row ${index + 1}'),
+                        ),
+                      ),
+                      onChanged: (int? value) {
+                        if (value != null) {
+                          setState(() {
+                            selectedRow = value;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Preview:'),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Show selected header
+                            Container(
+                              color: Colors.grey.shade200,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: selectedRow < rows.length
+                                      ? rows[selectedRow].map<Widget>((cell) => 
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                                            width: 150,
+                                            child: Text(
+                                              cell.toString(),
+                                              style: const TextStyle(fontWeight: FontWeight.bold),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          )
+                                        ).toList()
+                                      : [const Text('No data')],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            // Show data rows with vertical and horizontal scrolling
+                            Expanded(
+                              child: rows.length > 1
+                                ? SingleChildScrollView(
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          // Show data rows (skip the selected header row)
+                                          ...rows.asMap().entries
+                                              .where((entry) => entry.key != selectedRow)
+                                              .take(20) // Show up to 20 rows
+                                              .map((entry) {
+                                                final rowIndex = entry.key;
+                                                final rowData = entry.value;
+                                                
+                                                return Container(
+                                                  padding: const EdgeInsets.symmetric(vertical: 6),
+                                                  decoration: BoxDecoration(
+                                                    border: Border(
+                                                      bottom: BorderSide(color: Colors.grey.shade300),
+                                                    ),
+                                                  ),
+                                                  child: Row(
+                                                    children: [
+                                                      // Row number
+                                                      Container(
+                                                        width: 50,
+                                                        padding: const EdgeInsets.only(right: 8),
+                                                        child: Text(
+                                                          'Row ${rowIndex + 1}',
+                                                          style: TextStyle(
+                                                            color: Colors.grey.shade600,
+                                                            fontSize: 12,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      // Row data
+                                                      ...rowData.map<Widget>((cell) => 
+                                                        Container(
+                                                          width: 150,
+                                                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                          child: Text(
+                                                            cell.toString(),
+                                                            overflow: TextOverflow.ellipsis,
+                                                          ),
+                                                        )
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+                                              }),
+                                        ],
+                                      ),
+                                    ),
+                                  )
+                                : const Center(child: Text('No data rows')),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(null),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(selectedRow),
+                  child: const Text('Continue'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+  
+  // Helper for showing simple messages
+  void _showMessage(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     }
   }
 
@@ -747,15 +889,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
   
-  // Show a simple message dialog
-  void _showMessage(String message) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
-    }
-  }
-
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -764,5 +897,445 @@ class _HomeScreenState extends State<HomeScreen> {
       _isLoading = false;
       _filePath = null;
     });
+  }
+
+  // Check if current month data is outdated and needs archiving
+  Future<void> _checkCurrentMonthData() async {
+    try {
+      // Get current month data file from FileService
+      final currentMonthFile = await _fileService.getCurrentMonthFile();
+      
+      // If file doesn't exist, nothing to archive
+      if (!await currentMonthFile.exists()) {
+        return;
+      }
+      
+      // Read the current month data
+      final jsonString = await currentMonthFile.readAsString();
+      final data = jsonDecode(jsonString);
+      
+      // Check if data contains a date field we can use
+      if (!data.containsKey('month') || !data.containsKey('year')) {
+        print('Current month data format does not contain month/year fields');
+        return;
+      }
+      
+      // Get stored month/year and current month/year
+      final storedMonth = data['month'] as int;
+      final storedYear = data['year'] as int;
+      
+      final now = DateTime.now();
+      final currentMonth = now.month;
+      final currentYear = now.year;
+      
+      // Check if data is from a previous month
+      final isOutdated = (currentYear > storedYear) || 
+                         (currentYear == storedYear && currentMonth > storedMonth);
+      
+      if (isOutdated && mounted) {
+        // Show dialog to prompt archiving
+        _showArchiveDialog(storedMonth, storedYear);
+      }
+    } catch (e) {
+      print('Error checking current month data: $e');
+    }
+  }
+  
+  // Show dialog to confirm archiving
+  void _showArchiveDialog(int month, int year) {
+    // Format month name
+    final monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    final monthName = monthNames[month - 1];
+    
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Archive Previous Month Data'),
+          content: Text(
+            'Data from $monthName $year was detected. Would you like to archive '
+            'this data to your yearly records and start fresh for the current month?'
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Dismiss dialog
+              },
+              child: const Text('Later'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Dismiss dialog
+                _archiveCurrentMonthData(); // Process the archive
+              },
+              child: const Text('Archive Data'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+  
+  // Archive current month data to yearly storage
+  Future<void> _archiveCurrentMonthData() async {
+    try {
+      setState(() {
+        _isLoading = true;
+      });
+      
+      // Get the yearly data repository
+      final yearlyRepo = YearlyDataRepository();
+      await yearlyRepo.initialize();
+      
+      // Read current month data
+      final currentMonthFile = await _fileService.getCurrentMonthFile();
+      final jsonString = await currentMonthFile.readAsString();
+      final data = jsonDecode(jsonString);
+      
+      // Extract transactions from current month data
+      List<Transaction> transactions = [];
+      if (data.containsKey('transactions') && data['transactions'] is List) {
+        final transactionsList = data['transactions'] as List;
+        transactions = transactionsList
+            .map((t) => Transaction.fromJson(t as Map<String, dynamic>))
+            .toList();
+      }
+      
+      if (transactions.isEmpty) {
+        _showMessage('No transactions found to archive.');
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+      
+      // Save transactions to yearly data
+      final success = await yearlyRepo.saveTransactions(transactions);
+      
+      // If successful, clear current month file by writing an empty structure
+      if (success) {
+        final now = DateTime.now();
+        final emptyData = {
+          'month': now.month,
+          'year': now.year,
+          'transactions': [],
+          'lastUpdated': now.toIso8601String(),
+        };
+        
+        await currentMonthFile.writeAsString(jsonEncode(emptyData));
+        
+        _showMessage('Successfully archived ${transactions.length} transactions to yearly data.');
+      } else {
+        _showMessage('Error archiving transactions. Please try again.');
+      }
+      
+    } catch (e) {
+      print('Error archiving current month data: $e');
+      _showMessage('Error archiving data: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  // Create test data for archiving feature
+  Future<void> _createTestDataForArchiving() async {
+    try {
+      setState(() {
+        _isLoading = true;
+      });
+      
+      // Create test transactions (for previous month)
+      final now = DateTime.now();
+      final lastMonth = DateTime(now.year, now.month - 1, 15); // Middle of last month
+      
+      // Test transactions with different amounts and types
+      final testTransactions = [
+        Transaction(
+          id: 'test1-${DateTime.now().millisecondsSinceEpoch}',
+          amount: 1500.0,
+          date: lastMonth,
+          description: 'SALA Lohn/Gehalt Monthly Salary',
+          bankName: 'Deutsche Bank',
+        ),
+        Transaction(
+          id: 'test2-${DateTime.now().millisecondsSinceEpoch}',
+          amount: -89.99,
+          date: lastMonth.add(const Duration(days: 2)),
+          description: 'Amazon.de Purchase',
+          bankName: 'Deutsche Bank',
+        ),
+        Transaction(
+          id: 'test3-${DateTime.now().millisecondsSinceEpoch}',
+          amount: -45.75,
+          date: lastMonth.add(const Duration(days: 5)),
+          description: 'REWE Supermarket',
+          bankName: 'Deutsche Bank',
+        ),
+        Transaction(
+          id: 'test4-${DateTime.now().millisecondsSinceEpoch}',
+          amount: -129.99,
+          date: lastMonth.add(const Duration(days: 7)),
+          description: 'Monthly Rent Payment',
+          bankName: 'Deutsche Bank',
+        ),
+        Transaction(
+          id: 'test5-${DateTime.now().millisecondsSinceEpoch}',
+          amount: -19.99,
+          date: lastMonth.add(const Duration(days: 10)),
+          description: 'Netflix Subscription',
+          bankName: 'Deutsche Bank',
+        ),
+      ];
+      
+      // Create current_month.json file with previous month's data
+      final file = await _fileService.getCurrentMonthFile();
+      
+      // Create the JSON structure
+      final previousMonthData = {
+        'month': lastMonth.month,
+        'year': lastMonth.year,
+        'transactions': testTransactions.map((t) => t.toJson()).toList(),
+        'lastUpdated': DateTime.now().subtract(const Duration(days: 15)).toIso8601String(),
+      };
+      
+      // Write to file
+      await file.writeAsString(jsonEncode(previousMonthData));
+      
+      // Show success message
+      _showMessage('Created test data for ${_getMonthName(lastMonth.month)} ${lastMonth.year}. Restart the app to see the archive prompt.');
+      
+    } catch (e) {
+      print('Error creating test data for archiving: $e');
+      _showMessage('Error creating test data: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+  
+  // Helper to get month name from number
+  String _getMonthName(int month) {
+    final monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    return monthNames[month - 1];
+  }
+
+  // Check data integrity and show results
+  Future<void> _checkDataIntegrity() async {
+    try {
+      setState(() {
+        _isLoading = true;
+      });
+      
+      // Get current year
+      final now = DateTime.now();
+      final currentYear = now.year;
+      
+      // Verify data consistency for current year
+      final consistencyResults = await _fileService.verifyDataConsistency(currentYear);
+      
+      // Check if repair is needed
+      final needsRepair = consistencyResults.isNotEmpty && 
+                         (consistencyResults.containsKey('summaryIssues') || 
+                          consistencyResults.containsKey('error'));
+      
+      // Show results dialog
+      if (!mounted) return;
+      
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('Data Integrity Check'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (consistencyResults.isEmpty)
+                    const Text('✅ All data is consistent and valid.', 
+                      style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                  
+                  if (consistencyResults.containsKey('error'))
+                    Text('❌ Error checking data: ${consistencyResults['error']}',
+                      style: const TextStyle(color: Colors.red)),
+                  
+                  if (consistencyResults.containsKey('summaryIssues')) ...[
+                    const Text('⚠️ Issues found in yearly summary:',
+                      style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    
+                    ...(consistencyResults['summaryIssues'] as List<String>).map((issue) => 
+                      Padding(
+                        padding: const EdgeInsets.only(left: 16, bottom: 4),
+                        child: Text('• $issue', style: const TextStyle(color: Colors.orange)),
+                      )
+                    ),
+                    
+                    const SizedBox(height: 8),
+                    const Text('Recalculated values from monthly data:',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    
+                    if (consistencyResults.containsKey('recalculatedValues')) ...[
+                      _buildValueRow('Total Income', 
+                        (consistencyResults['recalculatedValues'] as Map)['totalIncome']),
+                      _buildValueRow('Total Expenses', 
+                        (consistencyResults['recalculatedValues'] as Map)['totalExpenses']),
+                      _buildValueRow('Total Savings', 
+                        (consistencyResults['recalculatedValues'] as Map)['totalSavings']),
+                      _buildValueRow('Transaction Count', 
+                        (consistencyResults['recalculatedValues'] as Map)['transactionCount']),
+                    ],
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Close'),
+              ),
+              if (needsRepair)
+                ElevatedButton(
+                  onPressed: () async {
+                    Navigator.of(context).pop();
+                    await _repairDataIntegrity(currentYear);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                  ),
+                  child: const Text('Repair Data'),
+                ),
+            ],
+          );
+        },
+      );
+    } catch (e) {
+      print('Error checking data integrity: $e');
+      _showMessage('Error checking data integrity: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+  
+  // Helper to build value row for integrity check results
+  Widget _buildValueRow(String label, dynamic value) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, bottom: 4),
+      child: Row(
+        children: [
+          Text('$label: ', style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text(value.toString()),
+        ],
+      ),
+    );
+  }
+  
+  // Repair data integrity issues
+  Future<void> _repairDataIntegrity(int year) async {
+    try {
+      setState(() {
+        _isLoading = true;
+      });
+      
+      // Show confirmation dialog
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('Confirm Repair'),
+            content: const Text(
+              'This will recalculate yearly summaries based on monthly data. '
+              'A backup will be created before making changes. Continue?'
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                ),
+                child: const Text('Repair'),
+              ),
+            ],
+          );
+        },
+      );
+      
+      if (confirm != true) {
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+      
+      // Perform repair
+      final result = await _fileService.repairYearlyData(year);
+      
+      // Show result
+      if (result.containsKey('success') && result['success'] == true) {
+        _showMessage(result['message'] ?? 'Data repair completed successfully.');
+        
+        // Reload data after successful repair
+        await _loadData();
+      } else {
+        _showMessage(result['error'] ?? 'Error repairing data. Please try again.');
+      }
+      
+    } catch (e) {
+      print('Error repairing data: $e');
+      _showMessage('Error repairing data: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  // Load data for the home screen
+  Future<void> _loadData() async {
+    if (!mounted) return;
+    
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      // Initialize storage if needed
+      await _fileService.initializeStorage();
+      
+      // Reload banks
+      await _loadBanks();
+      
+    } catch (e) {
+      print('Error loading data: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading data: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 } 

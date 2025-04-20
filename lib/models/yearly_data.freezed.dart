@@ -28,6 +28,10 @@ mixin _$YearlyData {
   /// Yearly summary data containing aggregated financial metrics
   YearlySummary get summary => throw _privateConstructorUsedError;
 
+  /// Map of categories to subcategories for all transactions in this year
+  Map<String, Set<String>> get transactionCategories =>
+      throw _privateConstructorUsedError;
+
   /// Serializes this YearlyData to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
 
@@ -44,7 +48,11 @@ abstract class $YearlyDataCopyWith<$Res> {
           YearlyData value, $Res Function(YearlyData) then) =
       _$YearlyDataCopyWithImpl<$Res, YearlyData>;
   @useResult
-  $Res call({int year, Map<int, MonthlyData> months, YearlySummary summary});
+  $Res call(
+      {int year,
+      Map<int, MonthlyData> months,
+      YearlySummary summary,
+      Map<String, Set<String>> transactionCategories});
 
   $YearlySummaryCopyWith<$Res> get summary;
 }
@@ -67,6 +75,7 @@ class _$YearlyDataCopyWithImpl<$Res, $Val extends YearlyData>
     Object? year = null,
     Object? months = null,
     Object? summary = null,
+    Object? transactionCategories = null,
   }) {
     return _then(_value.copyWith(
       year: null == year
@@ -81,6 +90,10 @@ class _$YearlyDataCopyWithImpl<$Res, $Val extends YearlyData>
           ? _value.summary
           : summary // ignore: cast_nullable_to_non_nullable
               as YearlySummary,
+      transactionCategories: null == transactionCategories
+          ? _value.transactionCategories
+          : transactionCategories // ignore: cast_nullable_to_non_nullable
+              as Map<String, Set<String>>,
     ) as $Val);
   }
 
@@ -103,7 +116,11 @@ abstract class _$$YearlyDataImplCopyWith<$Res>
       __$$YearlyDataImplCopyWithImpl<$Res>;
   @override
   @useResult
-  $Res call({int year, Map<int, MonthlyData> months, YearlySummary summary});
+  $Res call(
+      {int year,
+      Map<int, MonthlyData> months,
+      YearlySummary summary,
+      Map<String, Set<String>> transactionCategories});
 
   @override
   $YearlySummaryCopyWith<$Res> get summary;
@@ -125,6 +142,7 @@ class __$$YearlyDataImplCopyWithImpl<$Res>
     Object? year = null,
     Object? months = null,
     Object? summary = null,
+    Object? transactionCategories = null,
   }) {
     return _then(_$YearlyDataImpl(
       year: null == year
@@ -139,6 +157,10 @@ class __$$YearlyDataImplCopyWithImpl<$Res>
           ? _value.summary
           : summary // ignore: cast_nullable_to_non_nullable
               as YearlySummary,
+      transactionCategories: null == transactionCategories
+          ? _value._transactionCategories
+          : transactionCategories // ignore: cast_nullable_to_non_nullable
+              as Map<String, Set<String>>,
     ));
   }
 }
@@ -149,8 +171,10 @@ class _$YearlyDataImpl extends _YearlyData {
   const _$YearlyDataImpl(
       {required this.year,
       final Map<int, MonthlyData> months = const {},
-      required this.summary})
+      required this.summary,
+      final Map<String, Set<String>> transactionCategories = const {}})
       : _months = months,
+        _transactionCategories = transactionCategories,
         super._();
 
   factory _$YearlyDataImpl.fromJson(Map<String, dynamic> json) =>
@@ -175,9 +199,22 @@ class _$YearlyDataImpl extends _YearlyData {
   @override
   final YearlySummary summary;
 
+  /// Map of categories to subcategories for all transactions in this year
+  final Map<String, Set<String>> _transactionCategories;
+
+  /// Map of categories to subcategories for all transactions in this year
+  @override
+  @JsonKey()
+  Map<String, Set<String>> get transactionCategories {
+    if (_transactionCategories is EqualUnmodifiableMapView)
+      return _transactionCategories;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_transactionCategories);
+  }
+
   @override
   String toString() {
-    return 'YearlyData(year: $year, months: $months, summary: $summary)';
+    return 'YearlyData(year: $year, months: $months, summary: $summary, transactionCategories: $transactionCategories)';
   }
 
   @override
@@ -187,13 +224,19 @@ class _$YearlyDataImpl extends _YearlyData {
             other is _$YearlyDataImpl &&
             (identical(other.year, year) || other.year == year) &&
             const DeepCollectionEquality().equals(other._months, _months) &&
-            (identical(other.summary, summary) || other.summary == summary));
+            (identical(other.summary, summary) || other.summary == summary) &&
+            const DeepCollectionEquality()
+                .equals(other._transactionCategories, _transactionCategories));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode => Object.hash(
-      runtimeType, year, const DeepCollectionEquality().hash(_months), summary);
+      runtimeType,
+      year,
+      const DeepCollectionEquality().hash(_months),
+      summary,
+      const DeepCollectionEquality().hash(_transactionCategories));
 
   /// Create a copy of YearlyData
   /// with the given fields replaced by the non-null parameter values.
@@ -215,7 +258,8 @@ abstract class _YearlyData extends YearlyData {
   const factory _YearlyData(
       {required final int year,
       final Map<int, MonthlyData> months,
-      required final YearlySummary summary}) = _$YearlyDataImpl;
+      required final YearlySummary summary,
+      final Map<String, Set<String>> transactionCategories}) = _$YearlyDataImpl;
   const _YearlyData._() : super._();
 
   factory _YearlyData.fromJson(Map<String, dynamic> json) =
@@ -231,6 +275,10 @@ abstract class _YearlyData extends YearlyData {
   /// Yearly summary data containing aggregated financial metrics
   @override
   YearlySummary get summary;
+
+  /// Map of categories to subcategories for all transactions in this year
+  @override
+  Map<String, Set<String>> get transactionCategories;
 
   /// Create a copy of YearlyData
   /// with the given fields replaced by the non-null parameter values.
