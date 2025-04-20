@@ -36,6 +36,9 @@ class BankMapping {
   final DateFormatType? dateFormatType;
   final AmountMappingType amountMappingType;
   
+  // Internal checksum for file integrity validation
+  final String? _checksum;
+  
   BankMapping({
     required this.bankName,
     required this.headerRowIndex,
@@ -47,7 +50,8 @@ class BankMapping {
     this.delimiter,
     this.dateFormatType,
     this.amountMappingType = AmountMappingType.single,
-  });
+    String? checksum,
+  }) : _checksum = checksum;
 
   // Connect the generated functions
   factory BankMapping.fromJson(Map<String, dynamic> json) {
@@ -66,6 +70,7 @@ class BankMapping {
       amountMappingType: json['amountMappingType'] != null
           ? AmountMappingType.values[json['amountMappingType'] as int]
           : AmountMappingType.single,
+      checksum: json['_checksum'] as String?,
     );
   }
   
@@ -81,6 +86,7 @@ class BankMapping {
       'delimiter': delimiter,
       'dateFormatType': dateFormatType?.index,
       'amountMappingType': amountMappingType.index,
+      if (_checksum != null) '_checksum': _checksum,
     };
   }
   

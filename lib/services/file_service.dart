@@ -186,42 +186,77 @@ class FileService {
 
   Future<Directory> get _banksDirectory async {
     try {
-    final path = await _localPath;
-    final banksDir = Directory('$path/banks');
+      final path = await _localPath;
+      final banksDir = Directory('$path/banks');
       
       // Try to create the directory
       try {
-    if (!await banksDir.exists()) {
+        if (!await banksDir.exists()) {
           await banksDir.create(recursive: true);
         }
-        // Test if we can write to it
-        final testFile = File('${banksDir.path}/test.tmp');
-        await testFile.writeAsString('test');
-        await testFile.delete();
         
-        return banksDir;
-      } catch (e) {
-        print('Error creating or writing to banks directory: $e');
-        
-        // Try alternate location - app's cache directory
+        // Test if we can write to it with better error handling
         try {
-          final cacheDir = await getTemporaryDirectory();
-          final alternateBanksDir = Directory('${cacheDir.path}/banks');
-          if (!await alternateBanksDir.exists()) {
-            await alternateBanksDir.create(recursive: true);
-          }
-          
-          // Verify we can write to the alternate directory
-          final testFile = File('${alternateBanksDir.path}/test.tmp');
+          final testFile = File('${banksDir.path}/test.tmp');
           await testFile.writeAsString('test');
           await testFile.delete();
           
-          print('Using alternate banks directory: ${alternateBanksDir.path}');
-          return alternateBanksDir;
-        } catch (e2) {
-          print('Error creating alternate banks directory: $e2');
-          throw Exception('Cannot find a writable directory for bank data');
+          return banksDir;
+        } catch (e) {
+          print('Error writing test file to banks directory: $e');
+          // Continue to alternate location rather than immediately throwing
         }
+      } catch (e) {
+        print('Error creating banks directory: $e');
+        // Continue to alternate location
+      }
+      
+      // Try both known working paths specifically for Android
+      final List<String> possiblePaths = [
+        '/data/data/com.example.pennypilot/cache/banks',
+        '/data/user/0/com.example.pennypilot/cache/banks',
+        '$path/banks' // Include original path as well
+      ];
+      
+      // Try each alternate location in sequence
+      for (final dirPath in possiblePaths) {
+        try {
+          final directory = Directory(dirPath);
+          if (!await directory.exists()) {
+            await directory.create(recursive: true);
+          }
+          
+          // Verify we can write to the directory
+          final testFile = File('${directory.path}/test.tmp');
+          await testFile.writeAsString('test');
+          await testFile.delete();
+          
+          print('Using banks directory: ${directory.path}');
+          return directory;
+        } catch (e) {
+          print('Error trying alternate path $dirPath: $e');
+          // Continue to next path
+        }
+      }
+      
+      // If all direct paths fail, use app's cache directory as last resort
+      try {
+        final cacheDir = await getTemporaryDirectory();
+        final alternateBanksDir = Directory('${cacheDir.path}/banks');
+        if (!await alternateBanksDir.exists()) {
+          await alternateBanksDir.create(recursive: true);
+        }
+        
+        // Verify we can write to the alternate directory
+        final testFile = File('${alternateBanksDir.path}/test.tmp');
+        await testFile.writeAsString('test');
+        await testFile.delete();
+        
+        print('Using fallback banks directory: ${alternateBanksDir.path}');
+        return alternateBanksDir;
+      } catch (e) {
+        print('Error creating alternate banks directory: $e');
+        throw Exception('Cannot find a writable directory for bank data');
       }
     } catch (e) {
       print('Error in _banksDirectory: $e');
@@ -295,23 +330,90 @@ class FileService {
     return File('${dir.path}/$sanitizedName.json');
   }
 
-  Future<void> saveBankMapping(BankMapping mapping) async {
+  /// Delete all bank mappings - useful for troubleshooting
+  Future<bool> deleteAllBankMappings() async {
+    try {
+      final dir = await _banksDirectory;
+      if (!await dir.exists()) {
+        print('Banks directory does not exist');
+        return true; // Nothing to delete
+      }
+      
+      final List<FileSystemEntity> files = dir.listSync();
+      int deletedCount = 0;
+      
+      for (var entity in files) {
+        if (entity is File && entity.path.endsWith('.json')) {
+          try {
+            await entity.delete();
+            print('Deleted mapping file: ${entity.path}');
+            deletedCount++;
+          } catch (e) {
+            print('Error deleting file ${entity.path}: $e');
+          }
+        }
+      }
+      
+      print('Deleted $deletedCount bank mapping files');
+      return true;
+    } catch (e) {
+      print('Error deleting bank mappings: $e');
+      return false;
+    }
+  }
+
+  Future<bool> saveBankMapping(BankMapping mapping) async {
     try {
       final file = await getBankMappingFile(mapping.bankName);
       final jsonData = mapping.toJson(); // Use generated toJson
       
-      // Use safe write with integrity validation
-      final success = await _integrityService.safeWriteJson(file, jsonData);
+      // Use direct write without integrity check to simplify
+      await file.writeAsString(jsonEncode(jsonData), flush: true);
+      print('Mapping saved to: ${file.path}');
       
-      if (success) {
-        print('Mapping saved to: ${file.path}');
-      } else {
-        throw Exception('Failed to safely write bank mapping');
+      // Verify the file was saved by trying to read it back
+      if (await file.exists()) {
+        try {
+          await file.readAsString();
+          return true;
+        } catch (e) {
+          print('Warning: Mapping saved but couldn\'t be read back: $e');
+          // Continue with alternative paths
+        }
       }
+      
+      // Try alternate known paths if default didn't work
+      final List<String> possiblePaths = [
+        '/data/data/com.example.pennypilot/cache/banks',
+        '/data/user/0/com.example.pennypilot/cache/banks'
+      ];
+      
+      // Try saving to each path directly
+      for (final dirPath in possiblePaths) {
+        try {
+          final directory = Directory(dirPath);
+          if (!await directory.exists()) {
+            await directory.create(recursive: true);
+          }
+          
+          final sanitizedName = mapping.bankName.replaceAll(RegExp(r'[^\w\.-]+'), '_');
+          final alternateFile = File('${dirPath}/$sanitizedName.json');
+          
+          await alternateFile.writeAsString(jsonEncode(jsonData), flush: true);
+          print('Mapping saved to alternate path: ${alternateFile.path}');
+          return true;
+        } catch (e) {
+          print('Error saving to alternate path: $e');
+          // Continue to next path
+        }
+      }
+      
+      print('Warning: Tried all paths but couldn\'t verify mapping was saved');
+      return false;
     } catch (e) {
       print('Error saving bank mapping: $e');
-      // Rethrow or handle as needed
-      rethrow;
+      // Return false instead of rethrowing
+      return false;
     }
   }
 
@@ -319,29 +421,55 @@ class FileService {
     try {
       final file = await getBankMappingFile(bankName);
       if (await file.exists()) {
-        // Use safe read with validation
-        final jsonMap = await _integrityService.safeReadJson(file);
+        // Try direct read first, then fall back to integrity service if needed
+        String jsonString;
+        try {
+          // First try to read directly from the file
+          jsonString = await file.readAsString();
+          print('Successfully loaded bank mapping from: ${file.path}');
+        } catch (e) {
+          print('Error reading bank mapping directly: $e');
+          // Try alternate paths instead of immediately returning null
+          jsonString = await _tryReadFromAlternatePaths(bankName);
+          if (jsonString.isEmpty) {
+            return null;
+          }
+        }
         
-        if (jsonMap == null) {
-          print('Could not safely read bank mapping for $bankName');
+        // Parse the JSON
+        try {
+          final jsonMap = jsonDecode(jsonString) as Map<String, dynamic>;
+          
+          // Fix for compatibility with old DateFormatType enum format
+          if (jsonMap.containsKey('dateFormatType') && jsonMap['dateFormatType'] != null) {
+            // Convert old format (named with camelCase) to new format (lowercase)
+            final oldFormat = jsonMap['dateFormatType'] as int;
+            
+            // Map the old enum index to the new enum index
+            jsonMap['dateFormatType'] = oldFormat;
+          }
+          
+          return BankMapping.fromJson(jsonMap);
+        } catch (e) {
+          print('Error parsing bank mapping JSON: $e');
           return null;
         }
-        
-        // Fix for compatibility with old DateFormatType enum format
-        if (jsonMap.containsKey('dateFormatType') && jsonMap['dateFormatType'] != null) {
-          // Convert old format (named with camelCase) to new format (lowercase)
-          final oldFormat = jsonMap['dateFormatType'] as int;
-          
-          // Map the old enum index to the new enum index
-          // Old enum: mmDdYyyy=1, ddMmYyyy=2, yyyyMmDd=3
-          // New enum: mmddyyyy=1, ddmmyyyy=2, yyyymmdd=3
-          // (indices remain the same but names changed)
-          jsonMap['dateFormatType'] = oldFormat;
-        }
-        
-        return BankMapping.fromJson(jsonMap);
       } else {
-        print('Bank mapping file does not exist for $bankName');
+        print('Bank mapping file does not exist at primary location for $bankName');
+        // Try alternate paths
+        final jsonString = await _tryReadFromAlternatePaths(bankName);
+        if (jsonString.isNotEmpty) {
+          try {
+            final jsonMap = jsonDecode(jsonString) as Map<String, dynamic>;
+            if (jsonMap.containsKey('dateFormatType') && jsonMap['dateFormatType'] != null) {
+              final oldFormat = jsonMap['dateFormatType'] as int;
+              jsonMap['dateFormatType'] = oldFormat;
+            }
+            return BankMapping.fromJson(jsonMap);
+          } catch (e) {
+            print('Error parsing bank mapping from alternate path: $e');
+          }
+        }
         return null;
       }
     } catch (e) {
@@ -349,60 +477,108 @@ class FileService {
       return null;
     }
   }
+  
+  // Helper method to try reading from alternate paths
+  Future<String> _tryReadFromAlternatePaths(String bankName) async {
+    final sanitizedName = bankName.replaceAll(RegExp(r'[^\w\.-]+'), '_');
+    final List<String> possiblePaths = [
+      '/data/data/com.example.pennypilot/cache/banks',
+      '/data/user/0/com.example.pennypilot/cache/banks'
+    ];
+    
+    for (final dirPath in possiblePaths) {
+      try {
+        final alternateFile = File('${dirPath}/$sanitizedName.json');
+        if (await alternateFile.exists()) {
+          final content = await alternateFile.readAsString();
+          print('Successfully loaded bank mapping from alternate path: ${alternateFile.path}');
+          return content;
+        }
+      } catch (e) {
+        print('Error trying to read from alternate path: $e');
+      }
+    }
+    
+    return ''; // Return empty string if no file found
+  }
 
   Future<List<String>> listSavedBankNames() async {
+    Set<String> bankNames = {}; // Use a Set to avoid duplicates
+    
     try {
       // Try to get directory with additional error handling
       Directory? dir;
       try {
         dir = await _banksDirectory;
+        await _addBankNamesFromDirectory(dir, bankNames);
       } catch (e) {
-        print('Error getting banks directory: $e');
-        return []; // Return empty list on error
+        print('Error getting primary banks directory: $e');
+        // Continue to alternate directories
       }
       
-      if (dir == null || !await dir.exists()) {
-        print('Banks directory does not exist');
-        return [];
-      }
+      // Also check known alternate paths directly
+      final List<String> alternatePaths = [
+        '/data/data/com.example.pennypilot/cache/banks',
+        '/data/user/0/com.example.pennypilot/cache/banks'
+      ];
       
-      final List<String> bankNames = [];
-      List<FileSystemEntity> files;
-      
-      try {
-        files = dir.listSync(); // List files synchronously after getting dir
-      } catch (e) {
-        print('Error listing files in banks directory: $e');
-        return []; // Return empty list on error
-      }
-
-      for (var fileEntity in files) {
-        if (fileEntity is File && fileEntity.path.endsWith('.json')) {
-          // Try to load the mapping to get the original bank name
-          try {
-             final jsonString = await fileEntity.readAsString();
-             final jsonMap = jsonDecode(jsonString) as Map<String, dynamic>;
-             
-             // Try to fix compatibility issues before parsing
-             if (jsonMap.containsKey('dateFormatType') && jsonMap['dateFormatType'] != null) {
-               final oldFormat = jsonMap['dateFormatType'] as int;
-               jsonMap['dateFormatType'] = oldFormat;
-             }
-             
-             final mapping = BankMapping.fromJson(jsonMap);
-             bankNames.add(mapping.bankName); // Only add if successfully parsed
-          } catch (e) {
-             print("Error reading bank mapping from ${fileEntity.path}: $e");
-             // Don't add the bank if we can't parse its mapping
+      for (final dirPath in alternatePaths) {
+        try {
+          final directory = Directory(dirPath);
+          if (await directory.exists()) {
+            await _addBankNamesFromDirectory(directory, bankNames);
           }
+        } catch (e) {
+          print('Error checking alternate path $dirPath: $e');
         }
       }
-      // Sort alphabetically, case-insensitive
-      bankNames.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-      return bankNames;
+      
+      // Convert to sorted List
+      final sortedNames = bankNames.toList();
+      sortedNames.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      
+      return sortedNames;
     } catch (e) {
       print('Error listing saved bank names: $e');
       return []; // Return empty list on error
+    }
+  }
+  
+  // Helper method to extract bank names from a directory
+  Future<void> _addBankNamesFromDirectory(Directory dir, Set<String> bankNames) async {
+    if (!await dir.exists()) {
+      print('Directory ${dir.path} does not exist');
+      return;
+    }
+    
+    List<FileSystemEntity> files;
+    try {
+      files = dir.listSync();
+    } catch (e) {
+      print('Error listing files in directory ${dir.path}: $e');
+      return;
+    }
+    
+    for (var fileEntity in files) {
+      if (fileEntity is File && fileEntity.path.endsWith('.json')) {
+        try {
+          final jsonString = await fileEntity.readAsString();
+          final jsonMap = jsonDecode(jsonString) as Map<String, dynamic>;
+          
+          // Try to fix compatibility issues before parsing
+          if (jsonMap.containsKey('dateFormatType') && jsonMap['dateFormatType'] != null) {
+            final oldFormat = jsonMap['dateFormatType'] as int;
+            jsonMap['dateFormatType'] = oldFormat;
+          }
+          
+          if (jsonMap.containsKey('bankName')) {
+            final String bankName = jsonMap['bankName'] as String;
+            bankNames.add(bankName);
+          }
+        } catch (e) {
+          print("Error reading bank mapping from ${fileEntity.path}: $e");
+        }
+      }
     }
   }
 
@@ -415,28 +591,139 @@ class FileService {
     return File('${dir.path}/$sanitizedName.json');
   }
   
-  Future<void> saveCategoryMapping(CategoryMapping mapping) async {
+  Future<bool> saveCategoryMapping(CategoryMapping mapping) async {
     try {
       final file = await getCategoryMappingFile(mapping.keyword);
       final jsonString = jsonEncode(mapping.toJson());
+      
+      // Attempt to write to primary directory
       await file.writeAsString(jsonString);
       print('Category mapping saved to: ${file.path}');
+      
+      // Verify the file was saved by trying to read it back
+      if (await file.exists()) {
+        try {
+          await file.readAsString();
+          return true;
+        } catch (e) {
+          print('Warning: Category mapping saved but couldn\'t be read back: $e');
+          // Continue with alternative paths
+        }
+      }
+      
+      // Try alternate known paths if default didn't work
+      final List<String> possiblePaths = [
+        '/data/data/com.example.pennypilot/cache/mappings',
+        '/data/user/0/com.example.pennypilot/cache/mappings',
+        '/storage/emulated/0/Android/data/com.example.pennypilot/files/mappings'
+      ];
+      
+      // Try saving to each path directly
+      for (final dirPath in possiblePaths) {
+        try {
+          final directory = Directory(dirPath);
+          if (!await directory.exists()) {
+            await directory.create(recursive: true);
+          }
+          
+          final sanitizedName = mapping.keyword.replaceAll(RegExp(r'[^\w\.-]+'), '_');
+          final alternateFile = File('${dirPath}/$sanitizedName.json');
+          
+          await alternateFile.writeAsString(jsonString);
+          print('Category mapping saved to alternate path: ${alternateFile.path}');
+          return true;
+        } catch (e) {
+          print('Error saving category mapping to alternate path: $e');
+          // Continue to next path
+        }
+      }
+      
+      print('Warning: Tried all paths but couldn\'t verify category mapping was saved');
+      return false;
     } catch (e) {
       print('Error saving category mapping: $e');
-      rethrow;
+      return false; // Return false instead of rethrowing
+    }
+  }
+  
+  Future<bool> deleteCategoryMapping(String keyword) async {
+    try {
+      bool deleted = false;
+      
+      // Try primary file first
+      final file = await getCategoryMappingFile(keyword);
+      if (await file.exists()) {
+        await file.delete();
+        print('Category mapping deleted: ${file.path}');
+        deleted = true;
+      }
+      
+      // Also check known alternate paths
+      final sanitizedName = keyword.replaceAll(RegExp(r'[^\w\.-]+'), '_');
+      final List<String> alternatePaths = [
+        '/data/data/com.example.pennypilot/cache/mappings',
+        '/data/user/0/com.example.pennypilot/cache/mappings',
+        '/storage/emulated/0/Android/data/com.example.pennypilot/files/mappings'
+      ];
+      
+      for (final dirPath in alternatePaths) {
+        try {
+          final alternateFile = File('${dirPath}/$sanitizedName.json');
+          if (await alternateFile.exists()) {
+            await alternateFile.delete();
+            print('Category mapping deleted from alternate path: ${alternateFile.path}');
+            deleted = true;
+          }
+        } catch (e) {
+          print('Error deleting category mapping from $dirPath: $e');
+        }
+      }
+      
+      return deleted;
+    } catch (e) {
+      print('Error deleting category mapping: $e');
+      return false;
     }
   }
   
   Future<CategoryMapping?> loadCategoryMapping(String keyword) async {
     try {
+      // Try primary file first
       final file = await getCategoryMappingFile(keyword);
       if (await file.exists()) {
-        final jsonString = await file.readAsString();
-        final jsonMap = jsonDecode(jsonString) as Map<String, dynamic>;
-        return CategoryMapping.fromJson(jsonMap);
-      } else {
-        return null;
+        try {
+          final jsonString = await file.readAsString();
+          final jsonMap = jsonDecode(jsonString) as Map<String, dynamic>;
+          return CategoryMapping.fromJson(jsonMap);
+        } catch (e) {
+          print('Error reading category mapping directly: $e');
+          // Continue to try alternate paths
+        }
       }
+      
+      // Try alternate paths
+      final sanitizedName = keyword.replaceAll(RegExp(r'[^\w\.-]+'), '_');
+      final List<String> alternatePaths = [
+        '/data/data/com.example.pennypilot/cache/mappings',
+        '/data/user/0/com.example.pennypilot/cache/mappings',
+        '/storage/emulated/0/Android/data/com.example.pennypilot/files/mappings'
+      ];
+      
+      for (final dirPath in alternatePaths) {
+        try {
+          final alternateFile = File('${dirPath}/$sanitizedName.json');
+          if (await alternateFile.exists()) {
+            final jsonString = await alternateFile.readAsString();
+            final jsonMap = jsonDecode(jsonString) as Map<String, dynamic>;
+            print('Category mapping loaded from alternate path: ${alternateFile.path}');
+            return CategoryMapping.fromJson(jsonMap);
+          }
+        } catch (e) {
+          print('Error loading category mapping from $dirPath: $e');
+        }
+      }
+      
+      return null;
     } catch (e) {
       print('Error loading category mapping for $keyword: $e');
       return null;
@@ -444,34 +731,83 @@ class FileService {
   }
   
   Future<List<CategoryMapping>> loadAllCategoryMappings() async {
+    // Use a map to ensure unique mappings by keyword
+    Map<String, CategoryMapping> uniqueMappings = {};
+    Set<String> processedFiles = {}; // Track already processed files
+    
     try {
-      final dir = await _mappingsDirectory;
-      if (!await dir.exists()) {
-        return [];
+      // Try primary directory first
+      try {
+        final dir = await _mappingsDirectory;
+        if (await dir.exists()) {
+          await _loadMappingsFromDirectory(dir, uniqueMappings, processedFiles);
+        }
+      } catch (e) {
+        print('Error loading mappings from primary directory: $e');
       }
       
-      final List<CategoryMapping> mappings = [];
+      // Try alternate paths
+      final List<String> alternatePaths = [
+        '/data/data/com.example.pennypilot/cache/mappings',
+        '/data/user/0/com.example.pennypilot/cache/mappings',
+        '/storage/emulated/0/Android/data/com.example.pennypilot/files/mappings'
+      ];
+      
+      for (final dirPath in alternatePaths) {
+        try {
+          final directory = Directory(dirPath);
+          if (await directory.exists()) {
+            await _loadMappingsFromDirectory(directory, uniqueMappings, processedFiles);
+          }
+        } catch (e) {
+          print('Error loading mappings from alternate path $dirPath: $e');
+        }
+      }
+      
+      // Return only unique mappings as a list
+      return uniqueMappings.values.toList();
+    } catch (e) {
+      print('Error loading all category mappings: $e');
+      return uniqueMappings.values.toList(); // Return whatever we've loaded so far
+    }
+  }
+  
+  // Helper method to load mappings from a directory
+  Future<void> _loadMappingsFromDirectory(
+    Directory dir, 
+    Map<String, CategoryMapping> uniqueMappings, 
+    Set<String> processedFiles
+  ) async {
+    try {
       final files = await dir.list().where((entity) => 
         entity is File && entity.path.endsWith('.json')
       ).toList();
       
       for (var file in files) {
         try {
+          // Skip files we've already processed
+          if (processedFiles.contains(file.path)) continue;
+          
           final jsonString = await (file as File).readAsString();
           final jsonMap = jsonDecode(jsonString) as Map<String, dynamic>;
-          mappings.add(CategoryMapping.fromJson(jsonMap));
+          
+          // Mark file as processed
+          processedFiles.add(file.path);
+          
+          final mapping = CategoryMapping.fromJson(jsonMap);
+          
+          // Add to unique mappings map by keyword
+          uniqueMappings[mapping.keyword] = mapping;
+          print('Loaded category mapping for keyword "${mapping.keyword}" from: ${file.path}');
         } catch (e) {
           print('Error loading category mapping from ${file.path}: $e');
         }
       }
-      
-      return mappings;
     } catch (e) {
-      print('Error loading all category mappings: $e');
-      return [];
+      print('Error listing files in directory ${dir.path}: $e');
     }
   }
-  
+
   // --- Transaction Files ---
   
   Future<File> getTransactionFile(String id) async {
@@ -854,18 +1190,29 @@ class FileService {
     }
   }
 
-  // Get the contents of a bank mapping file as a string
+  // Helper method to get bank mapping contents for debugging
   Future<String?> getBankMappingContents(String bankName) async {
     try {
+      // Try primary location first
       final file = await getBankMappingFile(bankName);
       if (await file.exists()) {
-        final contents = await file.readAsString();
-        return contents;
-      } else {
-        return null;
+        try {
+          final content = await file.readAsString();
+          return content;
+        } catch (e) {
+          print('Error reading bank mapping content: $e');
+        }
       }
+      
+      // Try alternate paths
+      final jsonString = await _tryReadFromAlternatePaths(bankName);
+      if (jsonString.isNotEmpty) {
+        return jsonString;
+      }
+      
+      return null;
     } catch (e) {
-      print('Error reading bank mapping file: $e');
+      print('Error getting bank mapping contents: $e');
       return null;
     }
   }
@@ -997,6 +1344,7 @@ class FileService {
     String? bankName,
     BankMapping? mapping,
   ) async {
+    print('Processing CSV file: ${file.path}');
     try {
       if (bankName == null || mapping == null) {
         // Log the issue but continue with default values
@@ -1026,6 +1374,8 @@ class FileService {
       
       // Parse the CSV with correct delimiter
       final String delimiter = mapping.delimiter ?? ',';
+      print('Using delimiter: "$delimiter"');
+      
       final List<List<dynamic>> rows = CsvToListConverter(
         shouldParseNumbers: false,
         eol: '\n',
@@ -1041,11 +1391,31 @@ class FileService {
       final headerRowIndex = mapping.headerRowIndex < rows.length ? mapping.headerRowIndex : 0;
       final headerRow = rows[headerRowIndex];
       
+      print('Using header row: $headerRowIndex');
+      print('Header columns: ${headerRow.join(", ")}');
+      
       // Create a map of column names to indices
       Map<String, int> columnMap = {};
       for (int i = 0; i < headerRow.length; i++) {
-        columnMap[headerRow[i].toString()] = i;
+        // Store both the original column name and a normalized version (lowercase, trimmed)
+        final String colName = headerRow[i].toString();
+        columnMap[colName] = i;
+        // Also add normalized version to improve matching
+        columnMap[colName.toLowerCase().trim()] = i;
       }
+      
+      // Log the column mapping
+      print('Column mappings:');
+      print('Date column: ${mapping.dateColumn}');
+      print('Description column: ${mapping.descriptionColumn}');
+      print('Amount type: ${mapping.amountMappingType}');
+      if (mapping.amountMappingType == AmountMappingType.single) {
+        print('Amount column: ${mapping.amountColumn}');
+      } else {
+        print('Debit column: ${mapping.debitColumn}');
+        print('Credit column: ${mapping.creditColumn}');
+      }
+      print('Available columns in CSV: ${columnMap.keys.toList()}');
       
       // Extract transactions based on the mapping
       List<Transaction> transactions = [];
@@ -1055,7 +1425,10 @@ class FileService {
         final dataRow = rows[i];
         
         // Skip rows that don't have enough columns
-        if (dataRow.length < headerRow.length) continue;
+        if (dataRow.length < headerRow.length) {
+          print('Skipping row $i: Not enough columns');
+          continue;
+        }
         
         // Create a map of column names to values for this row
         Map<String, dynamic> rowData = {};
@@ -1069,29 +1442,71 @@ class FileService {
         // Map the columns according to the bank mapping
         Map<String, dynamic> transactionData = {};
         
+        // Helper function to find the value for a column regardless of case
+        String? getColumnValue(String? columnName) {
+          if (columnName == null) return null;
+          
+          // Try exact match
+          if (rowData.containsKey(columnName)) {
+            return rowData[columnName]?.toString();
+          }
+          
+          // Try lowercase match
+          final lowerColumnName = columnName.toLowerCase().trim();
+          if (rowData.containsKey(lowerColumnName)) {
+            return rowData[lowerColumnName]?.toString();
+          }
+          
+          // Try to find a close match (contains)
+          for (final key in rowData.keys) {
+            if (key.toLowerCase().contains(lowerColumnName) || 
+                lowerColumnName.contains(key.toLowerCase())) {
+              return rowData[key]?.toString();
+            }
+          }
+          
+          return null;
+        }
+        
         // Map date column
-        if (mapping.dateColumn != null && rowData.containsKey(mapping.dateColumn)) {
-          transactionData['date'] = rowData[mapping.dateColumn];
+        final dateValue = getColumnValue(mapping.dateColumn);
+        if (dateValue != null) {
+          transactionData['date'] = dateValue;
+        } else {
+          print('Warning: Date column "${mapping.dateColumn}" not found in row data for row $i');
         }
         
         // Map description column
-        if (mapping.descriptionColumn != null && rowData.containsKey(mapping.descriptionColumn)) {
-          transactionData['description'] = rowData[mapping.descriptionColumn];
+        final descValue = getColumnValue(mapping.descriptionColumn);
+        if (descValue != null) {
+          transactionData['description'] = descValue;
+        } else {
+          print('Warning: Description column "${mapping.descriptionColumn}" not found in row data for row $i');
         }
         
         // Map amount columns based on mapping type
         if (mapping.amountMappingType == AmountMappingType.single) {
           // Single amount column
-          if (mapping.amountColumn != null && rowData.containsKey(mapping.amountColumn)) {
-            transactionData['amount'] = rowData[mapping.amountColumn];
+          final amountValue = getColumnValue(mapping.amountColumn);
+          if (amountValue != null) {
+            transactionData['amount'] = amountValue;
+          } else {
+            print('Warning: Amount column "${mapping.amountColumn}" not found in row data for row $i');
           }
         } else {
           // Separate debit/credit columns
-          if (mapping.debitColumn != null && rowData.containsKey(mapping.debitColumn)) {
-            transactionData['debit'] = rowData[mapping.debitColumn];
+          final debitValue = getColumnValue(mapping.debitColumn);
+          if (debitValue != null) {
+            transactionData['debit'] = debitValue;
+          } else {
+            print('Warning: Debit column "${mapping.debitColumn}" not found in row data for row $i');
           }
-          if (mapping.creditColumn != null && rowData.containsKey(mapping.creditColumn)) {
-            transactionData['credit'] = rowData[mapping.creditColumn];
+          
+          final creditValue = getColumnValue(mapping.creditColumn);
+          if (creditValue != null) {
+            transactionData['credit'] = creditValue;
+          } else {
+            print('Warning: Credit column "${mapping.creditColumn}" not found in row data for row $i');
           }
         }
         
@@ -1104,11 +1519,12 @@ class FileService {
           );
           transactions.add(transaction);
         } catch (e) {
-          print('Error creating transaction from row: $e');
+          print('Error creating transaction from row $i: $e');
           // Skip this row and continue
         }
       }
       
+      print('Parsed ${transactions.length} transactions from CSV');
       return transactions;
     } catch (e) {
       print('Error processing CSV file: $e');
@@ -1240,6 +1656,94 @@ class FileService {
     } catch (e) {
       print('Error writing JSON to ${file.path}: $e');
       return false;
+    }
+  }
+
+  Future<bool> deleteBankMapping(String bankName) async {
+    try {
+      bool deleted = false;
+      
+      // Try primary directory first
+      try {
+        final file = await getBankMappingFile(bankName);
+        if (await file.exists()) {
+          await file.delete();
+          print('Deleted bank mapping from: ${file.path}');
+          deleted = true;
+        }
+      } catch (e) {
+        print('Error deleting bank mapping from primary location: $e');
+      }
+      
+      // Also check known alternate paths
+      final sanitizedName = bankName.replaceAll(RegExp(r'[^\w\.-]+'), '_');
+      final List<String> alternatePaths = [
+        '/data/data/com.example.pennypilot/cache/banks',
+        '/data/user/0/com.example.pennypilot/cache/banks'
+      ];
+      
+      for (final dirPath in alternatePaths) {
+        try {
+          final alternateFile = File('${dirPath}/$sanitizedName.json');
+          if (await alternateFile.exists()) {
+            await alternateFile.delete();
+            print('Deleted bank mapping from alternate path: ${alternateFile.path}');
+            deleted = true;
+          }
+        } catch (e) {
+          print('Error deleting bank mapping from $dirPath: $e');
+        }
+      }
+      
+      return deleted;
+    } catch (e) {
+      print('Error deleting bank mapping for $bankName: $e');
+      return false;
+    }
+  }
+
+  // Validate all bank mappings, return list of issues
+  Future<Map<String, String>> validateAllBankMappings() async {
+    Map<String, String> issues = {};
+    
+    try {
+      // Get list of all bank names from all possible directories
+      final bankNames = await listSavedBankNames();
+      
+      if (bankNames.isEmpty) {
+        return {'general': 'No bank mappings found'};
+      }
+      
+      // Check each bank mapping
+      for (final bankName in bankNames) {
+        try {
+          // Try to load the mapping
+          final mapping = await loadBankMapping(bankName);
+          
+          if (mapping == null) {
+            issues[bankName] = 'Could not load bank mapping';
+            continue;
+          }
+          
+          // Check if mapping has necessary fields
+          if (mapping.dateColumn == null) {
+            issues[bankName] = 'Missing date column';
+          } else if (mapping.descriptionColumn == null) {
+            issues[bankName] = 'Missing description column';
+          } else if (mapping.amountMappingType == AmountMappingType.single && mapping.amountColumn == null) {
+            issues[bankName] = 'Missing amount column';
+          } else if (mapping.amountMappingType == AmountMappingType.separate && 
+                    (mapping.debitColumn == null || mapping.creditColumn == null)) {
+            issues[bankName] = 'Missing debit or credit column';
+          }
+        } catch (e) {
+          issues[bankName] = 'Error validating mapping: $e';
+        }
+      }
+      
+      return issues;
+    } catch (e) {
+      return {'general': 'Error validating bank mappings: $e'};
     }
   }
 } 

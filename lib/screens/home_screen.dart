@@ -12,6 +12,8 @@ import '../models/transaction.dart'; // Import transaction model
 import '../models/bank_mapping.dart'; // Import bank mapping model
 import '../providers/yearly_data_provider.dart';
 import '../repositories/yearly_data_repository.dart';
+import '../screens/category_management_screen.dart';
+import '../screens/category_mapping_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -40,6 +42,13 @@ class _HomeScreenState extends State<HomeScreen> {
     
     // Check if current month data needs archiving
     _checkCurrentMonthData();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refresh banks whenever the dependencies change (e.g., returning from other screens)
+    _loadBanks();
   }
 
   // Request all required permissions upfront
@@ -104,7 +113,12 @@ class _HomeScreenState extends State<HomeScreen> {
        print('Unsorted bank names: $savedNames');
        
        // Include "Other" with the bank names
-       List<String> allBanks = ["Other", ...savedNames];
+       List<String> allBanks = ["Other"];
+       
+       // Add any saved names that aren't empty
+       if (savedNames.isNotEmpty) {
+         allBanks.addAll(savedNames.where((name) => name.isNotEmpty));
+       }
        
        // Sort all bank names alphabetically
        allBanks.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
@@ -116,8 +130,12 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() {
              _banks = allBanks;
              
-             // Set default selection to first bank in alphabetical order
-             if (_selectedBank == null || !_banks.contains(_selectedBank)) {
+             // If we already have a selection and it's still valid, keep it
+             if (_selectedBank != null && _banks.contains(_selectedBank)) {
+               // Keep current selection
+             }
+             // Otherwise, set default selection to first bank in alphabetical order
+             else {
                _selectedBank = _banks.isNotEmpty ? _banks[0] : null;
              }
              
@@ -128,6 +146,11 @@ class _HomeScreenState extends State<HomeScreen> {
        print("Error loading banks: $e");
        if (mounted) {
           setState(() {
+             // Even on error, ensure we have at least the "Other" option
+             if (_banks.isEmpty) {
+               _banks = ["Other"];
+               _selectedBank = "Other";
+             }
              _banksLoading = false; // Stop loading even on error
           });
           // Show error message to the user
@@ -184,6 +207,34 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('Home'),
               onTap: () {
                 Navigator.pop(context); // Close the drawer
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.category),
+              title: const Text('Category Management'),
+              onTap: () {
+                Navigator.pop(context); // Close the drawer
+                Navigator.push(
+                  context, 
+                  MaterialPageRoute(builder: (context) => const CategoryManagementScreen()),
+                ).then((_) {
+                  // Refresh banks when returning from category management
+                  _loadBanks();
+                });
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.rule),
+              title: const Text('Category Mappings'),
+              onTap: () {
+                Navigator.pop(context); // Close the drawer
+                Navigator.push(
+                  context, 
+                  MaterialPageRoute(builder: (context) => const CategoryMappingScreen()),
+                ).then((_) {
+                  // Refresh banks when returning from category mappings
+                  _loadBanks();
+                });
               },
             ),
           ],
@@ -304,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           // Debug Integrity Check button
           FloatingActionButton(
-            mini: true,
+        mini: true,
             heroTag: "integrityCheck",
             backgroundColor: Colors.green,
             child: const Icon(Icons.check_circle),
@@ -320,12 +371,22 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: _createTestDataForArchiving,
           ),
           const SizedBox(width: 8),
-          // Existing debug button
+          // Bank mapping validation button
           FloatingActionButton(
+            heroTag: "validateBtn",
+            backgroundColor: Colors.amber,
+            child: const Icon(Icons.health_and_safety),
+            onPressed: _showBankValidationDialog,
             mini: true,
+          ),
+          const SizedBox(width: 8),
+          // Debug button
+          FloatingActionButton(
             heroTag: "debugBtn",
-            child: const Icon(Icons.bug_report),
+            backgroundColor: Colors.purple,
             onPressed: _showDebugDialog,
+            mini: true,
+            child: const Icon(Icons.developer_mode),
           ),
         ],
       ),
@@ -449,7 +510,7 @@ class _HomeScreenState extends State<HomeScreen> {
       
       if (saveSuccess) {
         print('Successfully saved ${parsedTransactions.length} transactions to yearly JSON structure');
-      } else {
+            } else {
         print('Warning: Some transactions may not have been saved to yearly JSON structure');
       }
       
@@ -457,13 +518,13 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       
       Navigator.of(context).push(
-        MaterialPageRoute(
+              MaterialPageRoute(
           builder: (context) => TransactionScreen(
             transactions: parsedTransactions,
             bankName: _selectedBank ?? "Unknown", // Provide default value for non-nullable field
-          ),
-        ),
-      );
+                ),
+              ),
+            );
       
       setState(() {
         _isLoading = false;
@@ -494,9 +555,9 @@ class _HomeScreenState extends State<HomeScreen> {
       
       // Parse CSV with detected delimiter
       final parser = CsvToListConverter(
-        shouldParseNumbers: false,
-        eol: '\n',
-        fieldDelimiter: detectedDelimiter,
+                shouldParseNumbers: false,
+                eol: '\n',
+                fieldDelimiter: detectedDelimiter,
       );
       final rows = parser.convert(csvString);
       
@@ -538,6 +599,20 @@ class _HomeScreenState extends State<HomeScreen> {
           _isLoading = true; // Start loading again
         });
         
+        // Refresh the bank list to include the new mapping
+        await _loadBanks();
+        
+        // If the new mapping isn't in the dropdown selection yet, select it
+        if (!_banks.contains(result.bankName)) {
+          _banks.add(result.bankName);
+          _banks.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+        }
+        
+        // Select the new bank mapping
+        setState(() {
+          _selectedBank = result.bankName;
+        });
+        
         // Process the file with the new mapping
         final List<Transaction> parsedTransactions = await _fileService.processCSVFile(
           file,
@@ -560,15 +635,15 @@ class _HomeScreenState extends State<HomeScreen> {
         await yearlyRepo.saveTransactions(parsedTransactions);
         
         // Show transaction screen
-        if (mounted) {
+              if (mounted) {
           Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => TransactionScreen(
+                  MaterialPageRoute(
+                    builder: (context) => TransactionScreen(
                 transactions: parsedTransactions,
                 bankName: result.bankName,
-              ),
-            ),
-          );
+                    ),
+                  ),
+                );
         }
       }
       
@@ -579,10 +654,10 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       print('Error in CSV preview: $e');
       _showMessage('Error previewing CSV: $e');
-      setState(() {
-        _isLoading = false;
-      });
-    }
+        setState(() {
+          _isLoading = false;
+        });
+      }
   }
   
   // Dialog to select header row
@@ -617,7 +692,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       onChanged: (int? value) {
                         if (value != null) {
-                          setState(() {
+          setState(() {
                             selectedRow = value;
                           });
                         }
@@ -838,6 +913,57 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
                 child: const Text('Close'),
               ),
+              TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red,
+                ),
+                onPressed: () async {
+                  // Show confirmation dialog
+                  final bool confirm = await showDialog(
+                    context: context,
+                    builder: (BuildContext context) {
+                      return AlertDialog(
+                        title: const Text('Delete All Mappings?'),
+                        content: const Text(
+                          'Are you sure you want to delete all bank mappings? '
+                          'This action cannot be undone.'
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(false),
+                            child: const Text('Cancel'),
+                          ),
+                          TextButton(
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.red,
+                            ),
+                            onPressed: () => Navigator.of(context).pop(true),
+                            child: const Text('Delete All'),
+                          ),
+                        ],
+                      );
+                    },
+                  ) ?? false;
+                  
+                  if (confirm) {
+                    try {
+                      final success = await _fileService.deleteAllBankMappings();
+                      Navigator.of(context).pop(); // Close debug dialog
+                      
+                      if (success) {
+                        _showMessage('All bank mappings deleted successfully');
+                        // Refresh the bank list
+                        _loadBanks();
+                      } else {
+                        _showMessage('Failed to delete bank mappings');
+                      }
+                    } catch (e) {
+                      _showMessage('Error deleting mappings: $e');
+                    }
+                  }
+                },
+                child: const Text('Delete All Mappings'),
+              ),
               ElevatedButton(
                 onPressed: () async {
                   try {
@@ -890,9 +1016,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
   
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     setState(() { 
       _isLoading = false;
       _filePath = null;
@@ -1326,16 +1452,91 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       print('Error loading data: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading data: $e')),
-        );
+    );
       }
     } finally {
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+    setState(() { 
+      _isLoading = false;
+    });
       }
+    }
+  }
+
+  // Show validation dialog for bank mappings
+  Future<void> _showBankValidationDialog() async {
+    try {
+      setState(() {
+        _isLoading = true;
+      });
+      
+      // Check for bank mapping issues
+      final issues = await _fileService.validateAllBankMappings();
+      
+      setState(() {
+        _isLoading = false;
+      });
+      
+      if (issues.isEmpty) {
+        _showMessage('All bank mappings are valid');
+        return;
+      }
+      
+      // Show dialog with issues
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: const Text('Bank Mapping Issues'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('The following issues were found:'),
+                    const SizedBox(height: 10),
+                    ...issues.entries.map((entry) => 
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(entry.key, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text('  ${entry.value}'),
+                          ],
+                        ),
+                      )
+                    ).toList(),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('Close'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _showDebugDialog(); // Open the debug dialog
+                  },
+                  child: const Text('Show Debug Info'),
+                ),
+              ],
+            );
+          },
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      _showMessage('Error validating bank mappings: $e');
     }
   }
 } 

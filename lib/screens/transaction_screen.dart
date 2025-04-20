@@ -207,7 +207,15 @@ class _TransactionScreenState extends State<TransactionScreen> {
         subcategory: subcategory,
       );
       
-      await _fileService.saveCategoryMapping(mapping);
+      final success = await _fileService.saveCategoryMapping(mapping);
+      
+      if (!success) {
+        // If save failed, show error and exit
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error saving keyword mapping')),
+        );
+        return;
+      }
       
       // Add to local list for immediate use
       _categoryMappings.add(mapping);
@@ -261,6 +269,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
     
     // Create a controller with the initial value
     final keywordController = TextEditingController(text: keywordSuggestion);
+    
+    // Add a flag for creating mapping rule - default to true for better UX
+    bool createMappingRule = true;
     
     // Ensure we have a valid category list
     if (_categoryList == null) {
@@ -336,90 +347,130 @@ class _TransactionScreenState extends State<TransactionScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Show transaction description for context
                     Text(
-                      transaction.description,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    Text(
-                      'Amount: ${transaction.amount.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        color: transaction.amount < 0 ? Colors.red : Colors.green,
+                      'Description: ${transaction.description}',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey,
                       ),
                     ),
                     const SizedBox(height: 16),
-                    const Text('Category:'),
-                    DropdownButton<String>(
+                    // Category dropdown
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(
+                        labelText: 'Category',
+                        border: OutlineInputBorder(),
+                      ),
                       value: categoryExists ? selectedCategory : null,
-                      isExpanded: true,
-                      hint: const Text('Select a category'),
                       items: categories.map((category) {
-                        return DropdownMenuItem<String>(
+                        return DropdownMenuItem(
                           value: category,
                           child: Text(category),
                         );
                       }).toList(),
                       onChanged: (value) {
-                        if (value != null) {
-                          setState(() {
-                            selectedCategory = value;
-                            isOtherCategory = value == 'Other';
-                            selectedSubcategory = null; // Reset subcategory when category changes
-                          });
-                        }
+                        setState(() {
+                          selectedCategory = value;
+                          selectedSubcategory = null; // Reset subcategory on category change
+                          
+                          isOtherCategory = value == 'Other';
+                          isOtherSubcategory = false;
+                        });
                       },
                     ),
-                    // Show text field for new category if "Other" is selected
+                    
+                    // "Other" category text field
                     if (isOtherCategory) ...[
                       const SizedBox(height: 8),
                       TextField(
+                        controller: newCategoryController,
                         decoration: const InputDecoration(
-                          hintText: 'Enter new category name',
+                          labelText: 'New Category Name',
+                          hintText: 'Enter a name for your new category',
                           border: OutlineInputBorder(),
                         ),
-                        controller: newCategoryController,
                       ),
                     ],
-                    const SizedBox(height: 8),
-                    const Text('Subcategory:'),
-                    if (subcategories.isEmpty)
-                      const Text('No subcategories available')
-                    else
-                      DropdownButton<String>(
-                        value: subcategoryExists ? selectedSubcategory : null,
-                        isExpanded: true,
-                        hint: const Text('Select a subcategory'),
-                        items: subcategories.map((subcategory) {
-                          return DropdownMenuItem<String>(
-                            value: subcategory,
-                            child: Text(subcategory),
-                          );
-                        }).toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            selectedSubcategory = value;
-                            isOtherSubcategory = value == 'Other';
-                          });
-                        },
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Subcategory dropdown
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(
+                        labelText: 'Subcategory',
+                        border: OutlineInputBorder(),
                       ),
-                    // Show text field for new subcategory if "Other" is selected
-                    if (isOtherSubcategory && selectedCategory != null) ...[
+                      value: selectedSubcategory,
+                      items: subcategories.map((subcategory) {
+                        return DropdownMenuItem(
+                          value: subcategory,
+                          child: Text(subcategory),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          selectedSubcategory = value;
+                          isOtherSubcategory = value == 'Other';
+                        });
+                      },
+                    ),
+                    
+                    // "Other" subcategory text field
+                    if (isOtherSubcategory) ...[
                       const SizedBox(height: 8),
                       TextField(
+                        controller: newSubcategoryController,
                         decoration: const InputDecoration(
-                          hintText: 'Enter new subcategory name',
+                          labelText: 'New Subcategory Name',
+                          hintText: 'Enter a name for your new subcategory',
                           border: OutlineInputBorder(),
                         ),
-                        controller: newSubcategoryController,
                       ),
                     ],
+                    
                     const SizedBox(height: 16),
-                    const Text('Keyword for similar transactions:'),
+                    
+                    // Keyword input for mapping
                     TextField(
-                      decoration: const InputDecoration(
-                        hintText: 'Enter keyword from description',
-                      ),
                       controller: keywordController,
+                      decoration: const InputDecoration(
+                        labelText: 'Keyword for mapping',
+                        hintText: 'Enter a keyword to match similar transactions',
+                        border: OutlineInputBorder(),
+                      ),
                     ),
+                    
+                    const SizedBox(height: 8),
+                    
+                    // Checkbox to create mapping rule
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: createMappingRule,
+                          onChanged: (value) {
+                            setState(() {
+                              createMappingRule = value ?? false;
+                            });
+                          },
+                        ),
+                        const Expanded(
+                          child: Text(
+                            'Create rule for similar transactions',
+                            style: TextStyle(fontSize: 14),
+                          ),
+                        ),
+                      ],
+                    ),
+                    
+                    if (createMappingRule)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 32.0),
+                        child: Text(
+                          'Transactions containing this keyword will be automatically categorized',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -432,70 +483,63 @@ class _TransactionScreenState extends State<TransactionScreen> {
                 ),
                 ElevatedButton(
                   onPressed: () async {
-                    // Check for required field values
-                    if (selectedCategory == null || selectedSubcategory == null) {
+                    // Handle "Other" category input
+                    if (isOtherCategory && newCategoryController.text.isNotEmpty) {
+                      selectedCategory = newCategoryController.text;
+                      
+                      // Add new category to the list if it doesn't exist
+                      if (!_categoryList!.categories.contains(selectedCategory)) {
+                        _categoryList!.categories.add(selectedCategory!);
+                        _categoryList!.subcategories[selectedCategory!] = ['Other'];
+                        
+                        // Save the updated category list
+                        await _fileService.saveCategoryList(_categoryList!);
+                      }
+                    }
+                    
+                    // Handle "Other" subcategory input
+                    if (isOtherSubcategory && newSubcategoryController.text.isNotEmpty && selectedCategory != null) {
+                      selectedSubcategory = newSubcategoryController.text;
+                      
+                      // Add new subcategory to the list
+                      if (!_categoryList!.subcategories[selectedCategory!]!.contains(selectedSubcategory)) {
+                        _categoryList!.subcategories[selectedCategory!]!.add(selectedSubcategory!);
+                        
+                        // Save the updated category list
+                        await _fileService.saveCategoryList(_categoryList!);
+                      }
+                    }
+                    
+                    // Update the transaction
+                    if (selectedCategory != null && selectedSubcategory != null) {
+                      transaction.category = selectedCategory;
+                      transaction.subcategory = selectedSubcategory;
+                      
+                      Navigator.of(context).pop();
+                      
+                      // Save the transaction with its new category
+                      await _saveTransaction(transaction);
+                      
+                      // Also create a mapping if the checkbox is checked and keyword is provided
+                      final keyword = keywordController.text.trim();
+                      if (createMappingRule && keyword.isNotEmpty) {
+                        await _saveKeywordMapping(
+                          keyword,
+                          selectedCategory!,
+                          selectedSubcategory!,
+                          transaction
+                        );
+                      }
+                    } else {
+                      // Show error if category or subcategory is not selected
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Please select both category and subcategory')),
                       );
-                      return;
-                    }
-                    
-                    // Check if keyword is entered
-                    if (keywordController.text.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Please enter a keyword for mapping')),
-                      );
-                      return;
-                    }
-                    
-                    // Process "Other" selections
-                    String finalCategory = selectedCategory!;
-                    String finalSubcategory = selectedSubcategory!;
-                    
-                    // Handle new category if "Other" is selected
-                    if (isOtherCategory && newCategoryController.text.isNotEmpty) {
-                      finalCategory = newCategoryController.text.trim();
-                      
-                      // Add to category list if it doesn't exist
-                      if (!_categoryList!.categories.contains(finalCategory)) {
-                        _categoryList!.categories.add(finalCategory);
-                        _categoryList!.subcategories[finalCategory] = ['Other'];
-                        await _fileService.saveCategoryList(_categoryList!);
-                      }
-                    }
-                    
-                    // Handle new subcategory if "Other" is selected
-                    if (isOtherSubcategory && newSubcategoryController.text.isNotEmpty) {
-                      finalSubcategory = newSubcategoryController.text.trim();
-                      
-                      // Add to subcategory list if it doesn't exist
-                      if (!_categoryList!.subcategories[finalCategory]!.contains(finalSubcategory)) {
-                        _categoryList!.subcategories[finalCategory]!.add(finalSubcategory);
-                        await _fileService.saveCategoryList(_categoryList!);
-                      }
-                    }
-                    
-                    debugPrint('Saving with category: $finalCategory, subcategory: $finalSubcategory');
-                    
-                    // Update the transaction
-                    transaction.category = finalCategory;
-                    transaction.subcategory = finalSubcategory;
-                    
-                    // Save the transaction to persist changes
-                    await _saveTransaction(transaction);
-                    
-                    // Always save keyword mapping
-                    await _saveKeywordMapping(
-                      keywordController.text,
-                      finalCategory,
-                      finalSubcategory,
-                      transaction,
-                    );
-                    
-                    if (mounted) {
-                      Navigator.pop(context);
                     }
                   },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                  ),
                   child: const Text('Save'),
                 ),
               ],

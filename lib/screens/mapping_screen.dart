@@ -415,7 +415,11 @@ class _MappingScreenState extends State<MappingScreen> {
 
       try {
           // --- Save the Mapping using FileService ---
-          await _fileService.saveBankMapping(newMapping);
+          final success = await _fileService.saveBankMapping(newMapping);
+          
+          if (!success) {
+            throw Exception('Failed to save bank mapping');
+          }
           // ------------------------------------------
 
           debugPrint('Bank Name: $bankName');
@@ -429,8 +433,8 @@ class _MappingScreenState extends State<MappingScreen> {
              ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text('Mapping saved successfully for $bankName')),
              );
-             // Pop with 'true' to indicate success/refresh needed
-             Navigator.pop(context, true);
+             // Pop with the mapping object to indicate success and pass the mapping back
+             Navigator.pop(context, newMapping);
           }
 
       } catch (e) {

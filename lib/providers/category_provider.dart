@@ -49,7 +49,7 @@ class CategoryProvider extends StateNotifier<Map<String, Category>> {
               name: subcategoryName,
               parentCategory: categoryName,
               color: categoriesMap[categoryName]?.color ?? Colors.grey,
-              icon: Icons.subcategory,
+              icon: Icons.format_list_bulleted,
             );
           }
         }
@@ -129,7 +129,7 @@ class CategoryProvider extends StateNotifier<Map<String, Category>> {
         name: subcategoryName,
         parentCategory: categoryName,
         color: parentCategory?.color ?? Colors.grey,
-        icon: Icons.subcategory,
+        icon: Icons.format_list_bulleted,
       );
       
       // Update the state
