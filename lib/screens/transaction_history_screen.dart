@@ -19,9 +19,25 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
   
   bool _isLoading = true;
   List<Transaction> _allTransactions = [];
+  List<Transaction> _filteredTransactions = [];
   Map<String, List<Transaction>> _groupedTransactions = {};
   List<String> _categories = [];
   Map<String, List<String>> _subcategories = {};
+  
+  // Sorting and filtering options
+  String _sortCriteria = 'date';
+  bool _sortAscending = false;
+  String? _filterCategory;
+  String? _filterSubcategory;
+  String? _filterBankName;
+  DateTime? _filterStartDate;
+  DateTime? _filterEndDate;
+  double? _filterMinAmount;
+  double? _filterMaxAmount;
+  String? _searchQuery;
+  
+  // Grouping options
+  String _groupBy = 'bank'; // 'bank', 'category', 'month', 'none'
 
   @override
   void initState() {
@@ -56,21 +72,11 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         print('No data for previous year: $e');
       }
       
-      // Sort transactions by date (newest first)
-      _allTransactions.sort((a, b) => b.date.compareTo(a.date));
-      
-      // Group transactions by bank name
-      _groupedTransactions = {};
-      for (final transaction in _allTransactions) {
-        final bankName = transaction.bankName ?? 'Unknown Bank';
-        if (!_groupedTransactions.containsKey(bankName)) {
-          _groupedTransactions[bankName] = [];
-        }
-        _groupedTransactions[bankName]!.add(transaction);
-      }
-      
       // Load categories and subcategories
       await _loadCategories();
+      
+      // Apply initial filtering and sorting
+      _applyFiltersAndSort();
       
     } catch (e) {
       print('Error loading transaction history: $e');
@@ -160,22 +166,539 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
       for (final category in _subcategories.keys) {
         _subcategories[category]!.sort();
       }
-      
-      print('Loaded categories: $_categories');
-      for (final category in _categories) {
-        print('Subcategories for $category: ${_subcategories[category]}');
-      }
     } catch (e) {
       print('Error loading categories: $e');
     }
   }
 
-  Future<void> _updateTransaction(Transaction transaction, {String? category, String? subcategory}) async {
+  // Apply filters and sorting to the transactions
+  void _applyFiltersAndSort() {
+    // Start with all transactions
+    _filteredTransactions = List.from(_allTransactions);
+    
+    // Apply category filter
+    if (_filterCategory != null && _filterCategory!.isNotEmpty) {
+      _filteredTransactions = _filteredTransactions.where((t) => 
+        t.category == _filterCategory).toList();
+    }
+    
+    // Apply subcategory filter
+    if (_filterSubcategory != null && _filterSubcategory!.isNotEmpty) {
+      _filteredTransactions = _filteredTransactions.where((t) => 
+        t.subcategory == _filterSubcategory).toList();
+    }
+    
+    // Apply bank name filter
+    if (_filterBankName != null && _filterBankName!.isNotEmpty) {
+      _filteredTransactions = _filteredTransactions.where((t) => 
+        t.bankName == _filterBankName).toList();
+    }
+    
+    // Apply date range filter
+    if (_filterStartDate != null) {
+      _filteredTransactions = _filteredTransactions.where((t) => 
+        t.date.isAtSameMomentAs(_filterStartDate!) || 
+        t.date.isAfter(_filterStartDate!)).toList();
+    }
+    
+    if (_filterEndDate != null) {
+      _filteredTransactions = _filteredTransactions.where((t) => 
+        t.date.isAtSameMomentAs(_filterEndDate!) || 
+        t.date.isBefore(_filterEndDate!)).toList();
+    }
+    
+    // Apply amount range filter
+    if (_filterMinAmount != null) {
+      _filteredTransactions = _filteredTransactions.where((t) => 
+        t.amount >= _filterMinAmount!).toList();
+    }
+    
+    if (_filterMaxAmount != null) {
+      _filteredTransactions = _filteredTransactions.where((t) => 
+        t.amount <= _filterMaxAmount!).toList();
+    }
+    
+    // Apply search query filter
+    if (_searchQuery != null && _searchQuery!.trim().isNotEmpty) {
+      final query = _searchQuery!.toLowerCase();
+      _filteredTransactions = _filteredTransactions.where((t) => 
+        t.description.toLowerCase().contains(query) ||
+        (t.notes?.toLowerCase().contains(query) ?? false) ||
+        (t.otherData?.toLowerCase().contains(query) ?? false)).toList();
+    }
+    
+    // Apply sorting
+    _filteredTransactions.sort((a, b) {
+      int result;
+      
+      switch (_sortCriteria) {
+        case 'date':
+          result = a.date.compareTo(b.date);
+          break;
+        case 'amount':
+          result = a.amount.compareTo(b.amount);
+          break;
+        case 'description':
+          result = a.description.compareTo(b.description);
+          break;
+        case 'category':
+          final categoryA = a.category ?? '';
+          final categoryB = b.category ?? '';
+          result = categoryA.compareTo(categoryB);
+          break;
+        case 'bank':
+          final bankA = a.bankName;
+          final bankB = b.bankName;
+          result = bankA.compareTo(bankB);
+          break;
+        default:
+          result = a.date.compareTo(b.date);
+      }
+      
+      return _sortAscending ? result : -result;
+    });
+    
+    // Apply grouping
+    _groupTransactions();
+  }
+  
+  // Group transactions based on selected criteria
+  void _groupTransactions() {
+    _groupedTransactions = {};
+    
+    if (_groupBy == 'none') {
+      // No grouping, put all under a single key
+      _groupedTransactions['All Transactions'] = _filteredTransactions;
+      return;
+    }
+    
+    for (final transaction in _filteredTransactions) {
+      String groupKey;
+      
+      switch (_groupBy) {
+        case 'bank':
+          groupKey = transaction.bankName;
+          break;
+        case 'category':
+          groupKey = transaction.category ?? 'Uncategorized';
+          break;
+        case 'month':
+          final monthYear = DateFormat('MMMM yyyy').format(transaction.date);
+          groupKey = monthYear;
+          break;
+        default:
+          groupKey = transaction.bankName;
+      }
+      
+      if (!_groupedTransactions.containsKey(groupKey)) {
+        _groupedTransactions[groupKey] = [];
+      }
+      
+      _groupedTransactions[groupKey]!.add(transaction);
+    }
+  }
+  
+  // Reset all filters
+  void _resetFilters() {
+    setState(() {
+      _filterCategory = null;
+      _filterSubcategory = null;
+      _filterBankName = null;
+      _filterStartDate = null;
+      _filterEndDate = null;
+      _filterMinAmount = null;
+      _filterMaxAmount = null;
+      _searchQuery = null;
+      _applyFiltersAndSort();
+    });
+  }
+
+  // Show filter dialog
+  void _showFilterDialog() {
+    String? tempCategory = _filterCategory;
+    String? tempSubcategory = _filterSubcategory;
+    String? tempBankName = _filterBankName;
+    DateTime? tempStartDate = _filterStartDate;
+    DateTime? tempEndDate = _filterEndDate;
+    
+    // Get unique bank names from transactions
+    final bankNames = _allTransactions
+        .map((t) => t.bankName)
+        .toSet()
+        .toList();
+    bankNames.sort();
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Filter Transactions'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Category dropdown
+                  const Text('Category:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  DropdownButton<String?>(
+                    isExpanded: true,
+                    value: tempCategory,
+                    hint: const Text('All Categories'),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('All Categories'),
+                      ),
+                      ..._categories.map((category) => DropdownMenuItem<String?>(
+                        value: category,
+                        child: Text(category),
+                      )),
+                    ],
+                    onChanged: (value) {
+                      setDialogState(() {
+                        tempCategory = value;
+                        // Reset subcategory when category changes
+                        tempSubcategory = null;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  
+                  // Subcategory dropdown (only enabled if category is selected)
+                  const Text('Subcategory:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  DropdownButton<String?>(
+                    isExpanded: true,
+                    value: tempSubcategory,
+                    hint: const Text('All Subcategories'),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('All Subcategories'),
+                      ),
+                      ...(tempCategory != null && _subcategories.containsKey(tempCategory!)
+                          ? _subcategories[tempCategory!]!.map((subcategory) => DropdownMenuItem<String?>(
+                              value: subcategory,
+                              child: Text(subcategory),
+                            ))
+                          : []),
+                    ],
+                    onChanged: tempCategory == null
+                        ? null
+                        : (value) {
+                            setDialogState(() {
+                              tempSubcategory = value;
+                            });
+                          },
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Bank name dropdown
+                  const Text('Bank:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  DropdownButton<String?>(
+                    isExpanded: true,
+                    value: tempBankName,
+                    hint: const Text('All Banks'),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('All Banks'),
+                      ),
+                      ...bankNames.map((bank) => DropdownMenuItem<String?>(
+                        value: bank,
+                        child: Text(bank),
+                      )),
+                    ],
+                    onChanged: (value) {
+                      setDialogState(() {
+                        tempBankName = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Date range
+                  const Text('Date Range:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton.icon(
+                          icon: const Icon(Icons.calendar_today),
+                          label: Text(
+                            tempStartDate == null
+                                ? 'Start Date'
+                                : DateFormat('dd MMM yyyy').format(tempStartDate!),
+                          ),
+                          onPressed: () async {
+                            final date = await showDatePicker(
+                              context: context,
+                              initialDate: tempStartDate ?? DateTime.now(),
+                              firstDate: DateTime(2000),
+                              lastDate: DateTime.now().add(const Duration(days: 365)),
+                            );
+                            if (date != null) {
+                              setDialogState(() {
+                                tempStartDate = date;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextButton.icon(
+                          icon: const Icon(Icons.calendar_today),
+                          label: Text(
+                            tempEndDate == null
+                                ? 'End Date'
+                                : DateFormat('dd MMM yyyy').format(tempEndDate!),
+                          ),
+                          onPressed: () async {
+                            final date = await showDatePicker(
+                              context: context,
+                              initialDate: tempEndDate ?? DateTime.now(),
+                              firstDate: DateTime(2000),
+                              lastDate: DateTime.now().add(const Duration(days: 365)),
+                            );
+                            if (date != null) {
+                              setDialogState(() {
+                                tempEndDate = date;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    _filterCategory = tempCategory;
+                    _filterSubcategory = tempSubcategory;
+                    _filterBankName = tempBankName;
+                    _filterStartDate = tempStartDate;
+                    _filterEndDate = tempEndDate;
+                    _applyFiltersAndSort();
+                  });
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Apply'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+  
+  // Show sort dialog
+  void _showSortDialog() {
+    String tempSortCriteria = _sortCriteria;
+    bool tempSortAscending = _sortAscending;
+    
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Sort Transactions'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Sort by options
+                const Text('Sort by:', style: TextStyle(fontWeight: FontWeight.bold)),
+                RadioListTile<String>(
+                  title: const Text('Date'),
+                  value: 'date',
+                  groupValue: tempSortCriteria,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      tempSortCriteria = value!;
+                    });
+                  },
+                ),
+                RadioListTile<String>(
+                  title: const Text('Amount'),
+                  value: 'amount',
+                  groupValue: tempSortCriteria,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      tempSortCriteria = value!;
+                    });
+                  },
+                ),
+                RadioListTile<String>(
+                  title: const Text('Description'),
+                  value: 'description',
+                  groupValue: tempSortCriteria,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      tempSortCriteria = value!;
+                    });
+                  },
+                ),
+                RadioListTile<String>(
+                  title: const Text('Category'),
+                  value: 'category',
+                  groupValue: tempSortCriteria,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      tempSortCriteria = value!;
+                    });
+                  },
+                ),
+                RadioListTile<String>(
+                  title: const Text('Bank'),
+                  value: 'bank',
+                  groupValue: tempSortCriteria,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      tempSortCriteria = value!;
+                    });
+                  },
+                ),
+                
+                const Divider(),
+                
+                // Sort direction
+                Row(
+                  children: [
+                    Checkbox(
+                      value: tempSortAscending,
+                      onChanged: (value) {
+                        setDialogState(() {
+                          tempSortAscending = value!;
+                        });
+                      },
+                    ),
+                    const Text('Ascending order'),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    _sortCriteria = tempSortCriteria;
+                    _sortAscending = tempSortAscending;
+                    _applyFiltersAndSort();
+                  });
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Apply'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+  
+  // Show group by dialog
+  void _showGroupDialog() {
+    String tempGroupBy = _groupBy;
+    
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Group Transactions'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                RadioListTile<String>(
+                  title: const Text('By Bank'),
+                  value: 'bank',
+                  groupValue: tempGroupBy,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      tempGroupBy = value!;
+                    });
+                  },
+                ),
+                RadioListTile<String>(
+                  title: const Text('By Category'),
+                  value: 'category',
+                  groupValue: tempGroupBy,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      tempGroupBy = value!;
+                    });
+                  },
+                ),
+                RadioListTile<String>(
+                  title: const Text('By Month'),
+                  value: 'month',
+                  groupValue: tempGroupBy,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      tempGroupBy = value!;
+                    });
+                  },
+                ),
+                RadioListTile<String>(
+                  title: const Text('No Grouping'),
+                  value: 'none',
+                  groupValue: tempGroupBy,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      tempGroupBy = value!;
+                    });
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    _groupBy = tempGroupBy;
+                    _applyFiltersAndSort();
+                  });
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Apply'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _updateTransaction(Transaction transaction, {String? category, String? subcategory, String? otherData}) async {
     try {
       // Create updated transaction
       final updatedTransaction = transaction.copyWith(
         category: category ?? transaction.category,
         subcategory: subcategory ?? transaction.subcategory,
+        otherData: otherData ?? transaction.otherData,
       );
       
       // Update in repository
@@ -208,16 +731,319 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
     }
   }
 
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Transaction History'),
+        backgroundColor: const Color(0xFFE68A00),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.sort),
+            onPressed: _showSortDialog,
+            tooltip: 'Sort',
+          ),
+          IconButton(
+            icon: const Icon(Icons.filter_list),
+            onPressed: _showFilterDialog,
+            tooltip: 'Filter',
+          ),
+          IconButton(
+            icon: const Icon(Icons.group_work),
+            onPressed: _showGroupDialog,
+            tooltip: 'Group',
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadData,
+            tooltip: 'Refresh',
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Search bar
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: 'Search transactions...',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.clear),
+                  onPressed: () {
+                    setState(() {
+                      _searchQuery = null;
+                      _applyFiltersAndSort();
+                    });
+                  },
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10.0),
+                ),
+                filled: true,
+                fillColor: Colors.white,
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value;
+                  _applyFiltersAndSort();
+                });
+              },
+            ),
+          ),
+          
+          // Active filters display
+          if (_filterCategory != null || _filterBankName != null || _filterStartDate != null || 
+              _filterEndDate != null || _filterMinAmount != null || _filterMaxAmount != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Container(
+                padding: const EdgeInsets.all(8.0),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(10.0),
+                ),
+                child: Row(
+                  children: [
+                    const Text('Active Filters:'),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: [
+                          if (_filterCategory != null)
+                            _buildFilterChip('Category: $_filterCategory'),
+                          if (_filterSubcategory != null)
+                            _buildFilterChip('Subcategory: $_filterSubcategory'),
+                          if (_filterBankName != null)
+                            _buildFilterChip('Bank: $_filterBankName'),
+                          if (_filterStartDate != null)
+                            _buildFilterChip('From: ${DateFormat('dd MMM yyyy').format(_filterStartDate!)}'),
+                          if (_filterEndDate != null)
+                            _buildFilterChip('To: ${DateFormat('dd MMM yyyy').format(_filterEndDate!)}'),
+                        ],
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _resetFilters,
+                      child: const Text('Clear All'),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(60, 30),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            
+          // Summary information
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Found: ${_filteredTransactions.length} transactions',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  'Total: ${NumberFormat.currency(locale: 'de_DE', symbol: '€').format(_calculateTotal())}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: _calculateTotal() >= 0 ? Colors.green : Colors.red,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // Transaction list
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _filteredTransactions.isEmpty
+                    ? const Center(child: Text('No transactions found'))
+                    : _buildTransactionList(),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildFilterChip(String label) {
+    return Chip(
+      label: Text(
+        label,
+        style: const TextStyle(fontSize: 12),
+      ),
+      backgroundColor: Colors.grey.shade300,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+      labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+  
+  double _calculateTotal() {
+    return _filteredTransactions.fold(0, (sum, transaction) => sum + transaction.amount);
+  }
+
+  Widget _buildTransactionList() {
+    if (_groupedTransactions.isEmpty) {
+      return const Center(child: Text('No transactions match the filter criteria'));
+    }
+    
+    return ListView.builder(
+      itemCount: _groupedTransactions.length,
+      itemBuilder: (context, index) {
+        final groupName = _groupedTransactions.keys.elementAt(index);
+        final transactions = _groupedTransactions[groupName]!;
+        
+        return ExpansionTile(
+          title: Row(
+            children: [
+              Text(
+                groupName,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${transactions.length}',
+                  style: TextStyle(color: Colors.grey.shade700),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                NumberFormat.currency(locale: 'de_DE', symbol: '€').format(
+                  transactions.fold(0.0, (sum, tx) => sum + tx.amount)),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: transactions.fold(0.0, (sum, tx) => sum + tx.amount) >= 0 
+                      ? Colors.green 
+                      : Colors.red,
+                ),
+              )
+            ],
+          ),
+          initiallyExpanded: index == 0, // Expand the first group by default
+          children: [
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: transactions.length,
+              itemBuilder: (context, tIndex) {
+                final transaction = transactions[tIndex];
+                return _buildTransactionTile(transaction);
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildTransactionTile(Transaction transaction) {
+    final dateFormat = DateFormat('dd MMM yyyy');
+    final currencyFormat = NumberFormat.currency(locale: 'de_DE', symbol: '€');
+    
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: ListTile(
+        title: Text(
+          transaction.description,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(dateFormat.format(transaction.date)),
+            if (transaction.category != null)
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: _getCategoryColor(transaction.category),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      transaction.category!,
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                  if (transaction.subcategory != null) ...[
+                    const Text(' > ', style: TextStyle(fontSize: 12)),
+                    Text(transaction.subcategory!, style: const TextStyle(fontSize: 12)),
+                  ],
+                ],
+              ),
+            if (transaction.otherData != null && transaction.otherData!.isNotEmpty)
+              Text(
+                'Other: ${transaction.otherData}',
+                style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              )
+            else
+              Text(
+                'Other: NONE',
+                style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Colors.grey),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
+        ),
+        trailing: Text(
+          currencyFormat.format(transaction.amount),
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: transaction.amount >= 0 ? Colors.green : Colors.red,
+          ),
+        ),
+        onTap: () => _showCategorySelectionDialog(transaction),
+        onLongPress: () => _showDeleteConfirmationDialog(transaction),
+      ),
+    );
+  }
+  
+  Color _getCategoryColor(String? category) {
+    if (category == null) return Colors.grey;
+    
+    final Map<String, Color> categoryColors = {
+      'Income': Colors.green,
+      'Lifestyle': Colors.purple,
+      'Fundamentals': Colors.blue,
+      'Uncategorized': Colors.grey,
+    };
+    
+    return categoryColors[category] ?? Colors.orange;
+  }
+
   void _showCategorySelectionDialog(Transaction transaction) {
     // Try to guess best category based on description
     String? suggestedCategory = _suggestCategoryForTransaction(transaction);
     
     String? selectedCategory = transaction.category ?? suggestedCategory;
     String? selectedSubcategory = transaction.subcategory;
+    String? otherData = transaction.otherData;
     
     // For new category/subcategory input
     final TextEditingController newCategoryController = TextEditingController();
     final TextEditingController newSubcategoryController = TextEditingController();
+    final TextEditingController otherDataController = TextEditingController(
+      text: (transaction.otherData != null && transaction.otherData!.isNotEmpty) 
+        ? transaction.otherData! 
+        : "NONE"
+    );
     bool isAddingNewCategory = false;
     bool isAddingNewSubcategory = false;
     
@@ -241,6 +1067,26 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                     Text('Transaction: ${transaction.description}'),
                     Text('Amount: ${NumberFormat.currency(locale: 'de_DE', symbol: '€').format(transaction.amount)}'),
                     Text('Date: ${DateFormat('yyyy-MM-dd').format(transaction.date)}'),
+                    const SizedBox(height: 16),
+                    
+                    // Other data field
+                    TextField(
+                      controller: otherDataController,
+                      decoration: const InputDecoration(
+                        labelText: 'Other Information',
+                        hintText: 'Additional transaction data',
+                      ),
+                      readOnly: true,
+                      style: TextStyle(
+                        fontStyle: transaction.otherData != null && transaction.otherData!.isNotEmpty
+                            ? FontStyle.normal
+                            : FontStyle.italic,
+                        color: transaction.otherData != null && transaction.otherData!.isNotEmpty
+                            ? Colors.black
+                            : Colors.grey,
+                      ),
+                    ),
+                    
                     const SizedBox(height: 16),
                     
                     // Category selection or input field
@@ -439,6 +1285,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                       transaction, 
                       category: selectedCategory,
                       subcategory: selectedSubcategory,
+                      otherData: otherDataController.text.trim() != "NONE" ? otherDataController.text.trim() : transaction.otherData,
                     );
                   },
                   child: const Text('Update'),
@@ -651,6 +1498,15 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
             Text('Description: ${transaction.description}'),
             Text('Amount: ${NumberFormat.currency(locale: 'de_DE', symbol: '€').format(transaction.amount)}'),
             Text('Date: ${DateFormat('yyyy-MM-dd').format(transaction.date)}'),
+            if (transaction.otherData != null && transaction.otherData!.isNotEmpty)
+              Text('Other: ${transaction.otherData}')
+            else
+              Text(
+                'Other: NONE',
+                style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Colors.grey),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
           ],
         ),
         actions: [
@@ -671,136 +1527,5 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         ],
       ),
     );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Transaction History'),
-        backgroundColor: const Color(0xFFE68A00),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadData,
-            tooltip: 'Refresh',
-          ),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _allTransactions.isEmpty
-              ? const Center(child: Text('No transactions found'))
-              : _buildTransactionList(),
-    );
-  }
-
-  Widget _buildTransactionList() {
-    return ListView.builder(
-      itemCount: _groupedTransactions.length,
-      itemBuilder: (context, index) {
-        final bankName = _groupedTransactions.keys.elementAt(index);
-        final transactions = _groupedTransactions[bankName]!;
-        
-        return ExpansionTile(
-          title: Row(
-            children: [
-              Text(
-                bankName,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${transactions.length}',
-                  style: TextStyle(color: Colors.grey.shade700),
-                ),
-              ),
-            ],
-          ),
-          initiallyExpanded: index == 0, // Expand the first bank by default
-          children: [
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: transactions.length,
-              itemBuilder: (context, tIndex) {
-                final transaction = transactions[tIndex];
-                return _buildTransactionTile(transaction);
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildTransactionTile(Transaction transaction) {
-    final dateFormat = DateFormat('dd MMM yyyy');
-    final currencyFormat = NumberFormat.currency(locale: 'de_DE', symbol: '€');
-    
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: ListTile(
-        title: Text(
-          transaction.description,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(dateFormat.format(transaction.date)),
-            if (transaction.category != null)
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: _getCategoryColor(transaction.category),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      transaction.category!,
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                  ),
-                  if (transaction.subcategory != null) ...[
-                    const Text(' > ', style: TextStyle(fontSize: 12)),
-                    Text(transaction.subcategory!, style: const TextStyle(fontSize: 12)),
-                  ],
-                ],
-              ),
-          ],
-        ),
-        trailing: Text(
-          currencyFormat.format(transaction.amount),
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: transaction.amount >= 0 ? Colors.green : Colors.red,
-          ),
-        ),
-        onTap: () => _showCategorySelectionDialog(transaction),
-        onLongPress: () => _showDeleteConfirmationDialog(transaction),
-      ),
-    );
-  }
-  
-  Color _getCategoryColor(String? category) {
-    if (category == null) return Colors.grey;
-    
-    final Map<String, Color> categoryColors = {
-      'Income': Colors.green,
-      'Lifestyle': Colors.purple,
-      'Fundamentals': Colors.blue,
-      'Uncategorized': Colors.grey,
-    };
-    
-    return categoryColors[category] ?? Colors.orange;
   }
 } 

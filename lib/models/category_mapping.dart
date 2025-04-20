@@ -25,19 +25,30 @@ class CategoryMapping {
   Map<String, dynamic> toJson() => _$CategoryMappingToJson(this);
   
   // Check if this mapping matches a given transaction description
-  bool matchesDescription(String description) {
-    if (!caseSensitive) {
-      description = description.toLowerCase();
-      String lowercaseKeyword = keyword.toLowerCase();
-      
+  bool matchesDescription(String description, {String? otherData}) {
+    // Prepare the keyword and strings to check based on case sensitivity
+    String keywordToMatch = caseSensitive ? keyword : keyword.toLowerCase();
+    String descriptionToCheck = caseSensitive ? description : description.toLowerCase();
+    String? otherDataToCheck = otherData != null ? 
+        (caseSensitive ? otherData : otherData.toLowerCase()) : null;
+    
+    // Check if the keyword matches the description
+    bool matchesDesc = exactMatch 
+        ? descriptionToCheck == keywordToMatch
+        : descriptionToCheck.contains(keywordToMatch);
+    
+    // If already matches the description, no need to check otherData
+    if (matchesDesc) return true;
+    
+    // If otherData is provided, check if the keyword matches it
+    if (otherDataToCheck != null && otherDataToCheck.isNotEmpty && otherDataToCheck != "none") {
       return exactMatch 
-          ? description == lowercaseKeyword
-          : description.contains(lowercaseKeyword);
-    } else {
-      return exactMatch
-          ? description == keyword
-          : description.contains(keyword);
+          ? otherDataToCheck == keywordToMatch
+          : otherDataToCheck.contains(keywordToMatch);
     }
+    
+    // No match found in either field
+    return false;
   }
 }
 

@@ -273,14 +273,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   width: 100,
                   height: 89,
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'PennyPilot',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                  ),
-                ),
               ],
             ),
           ),

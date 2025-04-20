@@ -319,20 +319,25 @@ class _DataUploadScreenState extends State<DataUploadScreen> {
                   ),
                   const SizedBox(height: 8),
                   Center(
-                    child: ElevatedButton.icon(
-                      icon: _isLoading
-                          ? Container( // Show loading indicator
-                              width: 24,
-                              height: 24,
-                              padding: const EdgeInsets.all(2.0),
-                              child: const CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 3,
-                              ),
-                            )
-                          : const Icon(Icons.upload_file), // Show icon otherwise
-                      label: Text(_isLoading ? 'Processing...' : 'Select CSV File'),
-                      onPressed: _isLoading ? null : _pickFile, // Disable button when loading
+                    child: Column(
+                      children: [
+                        ElevatedButton.icon(
+                          icon: _isLoading
+                              ? Container( // Show loading indicator
+                                  width: 24,
+                                  height: 24,
+                                  padding: const EdgeInsets.all(2.0),
+                                  child: const CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 3,
+                                  ),
+                                )
+                              : const Icon(Icons.upload_file), // Show icon otherwise
+                          label: Text(_isLoading ? 'Processing...' : 'Select CSV File'),
+                          onPressed: _isLoading ? null : _pickFile, // Disable button when loading
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -416,27 +421,83 @@ class _DataUploadScreenState extends State<DataUploadScreen> {
     if (!hasPermission || !mounted) return;
 
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['csv'],
+      // Show option dialog to choose file source
+      final source = await showDialog<String>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Select file source'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'browse'),
+              child: const Text('Browse device files'),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'recent'),
+              child: const Text('Recent files in Documents'),
+            ),
+          ],
+        ),
       );
 
-      if (result != null && result.files.single.path != null && mounted) {
+      if (source == null) return;
+      
+      if (source == 'recent') {
+        // Show available CSV files from Documents folder
+        final csvFiles = await _fileService.checkDocumentsForCSVFiles();
+        
+        if (csvFiles.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('No CSV files found in Documents folder')),
+            );
+          }
+          return;
+        }
+        
+        // Show list of available CSV files
+        final selectedFilePath = await showDialog<String>(
+          context: context,
+          builder: (context) => SimpleDialog(
+            title: const Text('Select CSV file'),
+            children: csvFiles.map((file) {
+              final fileName = file.path.split('/').last;
+              return SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, file.path),
+                child: Text(fileName),
+              );
+            }).toList(),
+          ),
+        );
+        
+        if (selectedFilePath == null) return;
+        
         setState(() {
-          _filePath = result.files.single.path!; // Store the full path
-          _isLoading = true; // Start loading indicator
+          _filePath = selectedFilePath;
+          _isLoading = true;
         });
-
-        // --- Add file processing logic here ---
+        
         await _processSelectedFile(File(_filePath!));
-        // -------------------------------------
-
       } else {
-        print('User canceled file picking or widget unmounted.');
-        if (mounted) {
+        // Use standard file picker
+        FilePickerResult? result = await FilePicker.platform.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: ['csv'],
+        );
+
+        if (result != null && result.files.single.path != null && mounted) {
           setState(() {
-            _filePath = null;
+            _filePath = result.files.single.path!;
+            _isLoading = true;
           });
+
+          await _processSelectedFile(File(_filePath!));
+        } else {
+          print('User canceled file picking or widget unmounted.');
+          if (mounted) {
+            setState(() {
+              _filePath = null;
+            });
+          }
         }
       }
     } catch (e) {
@@ -444,7 +505,7 @@ class _DataUploadScreenState extends State<DataUploadScreen> {
       if (mounted) {
         setState(() {
           _filePath = null;
-          _isLoading = false; // Stop loading on error
+          _isLoading = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error picking file: $e')),
@@ -1535,6 +1596,212 @@ class _DataUploadScreenState extends State<DataUploadScreen> {
         _isLoading = false;
       });
       _showMessage('Error validating bank mappings: $e');
+    }
+  }
+
+  // Add this method to check the Downloads folder
+  Future<void> _checkDownloadsFolder() async {
+    try {
+      setState(() {
+        _isLoading = true;
+      });
+      
+      // List of common download paths on Android
+      final List<String> potentialPaths = [
+        '/storage/emulated/0/Download',
+        '/storage/emulated/0/Downloads',
+        '/sdcard/Download',
+        '/sdcard/Downloads',
+      ];
+      
+      print('Checking for CSV files in Downloads folders...');
+      
+      // Try to find any CSV files in each potential download directory
+      for (String dirPath in potentialPaths) {
+        final dir = Directory(dirPath);
+        if (await dir.exists()) {
+          print('Found directory: $dirPath');
+          
+          try {
+            final List<FileSystemEntity> entities = await dir.list().toList();
+            final List<File> csvFiles = [];
+            
+            for (final entity in entities) {
+              if (entity is File && entity.path.toLowerCase().endsWith('.csv')) {
+                csvFiles.add(entity);
+              }
+            }
+            
+            if (csvFiles.isNotEmpty) {
+              // We found CSV files in this directory, now let the user choose one
+              if (mounted) {
+                final file = await _showCsvFileSelectionDialog(csvFiles);
+                if (file != null) {
+                  setState(() {
+                    _filePath = file.path;
+                  });
+                  await _processSelectedFile(file);
+                  return;
+                }
+              }
+            }
+          } catch (e) {
+            print('Error listing files in $dirPath: $e');
+          }
+        }
+      }
+      
+      // Also try to request directory access and search
+      try {
+        print('Trying to access Download directory through storage API...');
+        final directory = await getExternalStorageDirectory();
+        if (directory != null) {
+          print('External storage directory: ${directory.path}');
+          // Check parent directories up to 3 levels to find the Download folder
+          Directory? currentDir = directory;
+          for (int i = 0; i < 3; i++) {
+            if (currentDir == null) break;
+            
+            for (String downloadName in ['Download', 'Downloads']) {
+              final downloadDir = Directory('${currentDir.path}/$downloadName');
+              if (await downloadDir.exists()) {
+                try {
+                  final List<FileSystemEntity> entities = await downloadDir.list().toList();
+                  final List<File> csvFiles = [];
+                  
+                  for (final entity in entities) {
+                    if (entity is File && entity.path.toLowerCase().endsWith('.csv')) {
+                      csvFiles.add(entity);
+                    }
+                  }
+                  
+                  if (csvFiles.isNotEmpty) {
+                    // We found CSV files in this directory, now let the user choose one
+                    if (mounted) {
+                      final file = await _showCsvFileSelectionDialog(csvFiles);
+                      if (file != null) {
+                        setState(() {
+                          _filePath = file.path;
+                        });
+                        await _processSelectedFile(file);
+                        return;
+                      }
+                    }
+                  }
+                } catch (e) {
+                  print('Error listing files in ${downloadDir.path}: $e');
+                }
+              }
+            }
+            
+            currentDir = currentDir.parent;
+          }
+        }
+      } catch (e) {
+        print('Error accessing directory: $e');
+      }
+      
+      // If we get here, we couldn't find CSV files
+      _showMessage('No CSV files found in Downloads folders. Please browse manually.');
+      
+      // Fall back to file picker
+      await _pickFile();
+    } catch (e) {
+      print('Error checking Downloads folder: $e');
+      _showMessage('Error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+  
+  // New method to let user select from found CSV files
+  Future<File?> _showCsvFileSelectionDialog(List<File> csvFiles) async {
+    return showDialog<File>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Select CSV File'),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 300,
+            child: ListView.builder(
+              itemCount: csvFiles.length,
+              itemBuilder: (context, index) {
+                final file = csvFiles[index];
+                final fileName = file.path.split('/').last;
+                
+                return ListTile(
+                  leading: const Icon(Icons.description),
+                  title: Text(fileName),
+                  subtitle: Text('${(file.lengthSync() / 1024).toStringAsFixed(1)} KB'),
+                  onTap: () => Navigator.of(context).pop(file),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+  
+  // Comprehensive permissions request
+  Future<bool> _requestAllPermissions() async {
+    try {
+      // Request all storage-related permissions
+      Map<Permission, PermissionStatus> statuses = await [
+        Permission.storage,
+        Permission.manageExternalStorage,
+        Permission.photos,
+        Permission.videos,
+        Permission.audio,
+      ].request();
+      
+      // Check if any essential permission is permanently denied
+      bool isPermanentlyDenied = statuses.values.any((status) => status.isPermanentlyDenied);
+      if (isPermanentlyDenied && mounted) {
+        // Show dialog to open settings
+        bool shouldOpenSettings = await showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Storage Permission Required'),
+            content: const Text(
+              'Storage permission is required to access files. '
+              'Please grant the permission in Settings.'
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Open Settings'),
+              ),
+            ],
+          ),
+        ) ?? false;
+        
+        if (shouldOpenSettings) {
+          await openAppSettings();
+        }
+        return false;
+      }
+      
+      // Check if at least basic storage permission is granted
+      return statuses[Permission.storage]?.isGranted == true;
+    } catch (e) {
+      print('Error requesting permissions: $e');
+      return false;
     }
   }
 } 

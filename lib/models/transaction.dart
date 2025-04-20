@@ -11,6 +11,7 @@ class Transaction {
   String? matchedKeyword;
   final String bankName;
   String? notes;
+  String? otherData;
 
   Transaction({
     required this.id,
@@ -22,6 +23,7 @@ class Transaction {
     this.matchedKeyword,
     required this.bankName,
     this.notes,
+    this.otherData,
   });
   
   factory Transaction.fromJson(Map<String, dynamic> json) {
@@ -35,6 +37,7 @@ class Transaction {
       matchedKeyword: json['matchedKeyword'] as String?,
       bankName: json['bankName'] as String,
       notes: json['notes'] as String?,
+      otherData: json['otherData'] as String?,
     );
   }
     
@@ -49,6 +52,7 @@ class Transaction {
       'matchedKeyword': matchedKeyword,
       'bankName': bankName,
       'notes': notes,
+      'otherData': otherData,
     };
   }
     
@@ -63,6 +67,7 @@ class Transaction {
     String? matchedKeyword,
     String? bankName,
     String? notes,
+    String? otherData,
   }) {
     return Transaction(
       id: id ?? this.id,
@@ -74,6 +79,7 @@ class Transaction {
       matchedKeyword: matchedKeyword ?? this.matchedKeyword,
       bankName: bankName ?? this.bankName,
       notes: notes ?? this.notes,
+      otherData: otherData ?? this.otherData,
     );
   }
     
@@ -86,49 +92,55 @@ class Transaction {
     // Convert data from CSV to a Transaction
     final uuid = Uuid();
     
-    // Debug the input data
-    print('Creating transaction from CSV row for $bankName: ${rowData.toString()}');
-    
     // Parse amount
     double amount = 0.0;
     if (rowData.containsKey('amount')) {
       final amountStr = rowData['amount'].toString();
-      print('Parsing amount from single column: $amountStr');
       amount = _parseAmount(amountStr);
     } else if (rowData.containsKey('debit') && rowData.containsKey('credit')) {
       // Handle separate debit/credit columns
       final debitStr = rowData['debit'].toString();
       final creditStr = rowData['credit'].toString();
       
-      print('Parsing amount from separate columns - Debit: $debitStr, Credit: $creditStr');
-      
       // For Deutsche Bank format, both might be filled with values
       if (debitStr.isNotEmpty && creditStr.isEmpty) {
-        amount = -1 * _parseAmount(debitStr); // Debit is negative
-        print('Using debit amount (negative): $amount');
+        // Debit is negative - Check if it's already negative
+        final parsedAmount = _parseAmount(debitStr);
+        if (parsedAmount < 0) {
+          // It's already negative, keep it as is
+          amount = parsedAmount;
+        } else {
+          // It's positive, make it negative
+          amount = -1 * parsedAmount;
+        }
       } else if (creditStr.isNotEmpty && debitStr.isEmpty) {
         amount = _parseAmount(creditStr); // Credit is positive
-        print('Using credit amount (positive): $amount');
       } else if (debitStr.isNotEmpty && creditStr.isNotEmpty) {
         // Some banks may have values in both columns
         // Usually one is empty/zero and the other has the value
         final debitAmount = _parseAmount(debitStr);
         final creditAmount = _parseAmount(creditStr);
         
-        if (debitAmount > 0 && creditAmount == 0) {
-          amount = -debitAmount; // Debit is negative
-          print('Using non-zero debit amount (negative): $amount');
-        } else if (creditAmount > 0 && debitAmount == 0) {
+        if (debitAmount != 0 && creditAmount == 0) {
+          // Debit is negative - check if already negative
+          if (debitAmount < 0) {
+            amount = debitAmount; // Already negative
+          } else {
+            amount = -debitAmount; // Make it negative
+          }
+        } else if (creditAmount != 0 && debitAmount == 0) {
           amount = creditAmount; // Credit is positive
-          print('Using non-zero credit amount (positive): $amount');
         } else {
           // If both have values, use the larger one with appropriate sign
-          if (debitAmount > creditAmount) {
-            amount = -debitAmount;
-            print('Both columns have values, using larger debit (negative): $amount');
+          if (debitAmount.abs() > creditAmount.abs()) {
+            // Use debit (negative) - check if already negative
+            if (debitAmount < 0) {
+              amount = debitAmount; // Already negative
+            } else {
+              amount = -debitAmount; // Make it negative
+            }
           } else {
             amount = creditAmount;
-            print('Both columns have values, using larger credit (positive): $amount');
           }
         }
       }
@@ -138,14 +150,14 @@ class Transaction {
     DateTime date = DateTime.now();
     if (rowData.containsKey('date')) {
       final dateStr = rowData['date'].toString();
-      print('Parsing date: $dateStr using format: $dateFormatType');
       date = _parseDate(dateStr, dateFormatType);
-      print('Parsed date: $date');
     }
     
     // Get description
     String description = rowData['description']?.toString() ?? 'No description';
-    print('Using description: $description');
+    
+    // Get other data if available
+    String? otherData = rowData['otherData']?.toString();
     
     // Create transaction with default category
     return Transaction(
@@ -156,6 +168,7 @@ class Transaction {
       bankName: bankName ?? 'Unknown Bank',
       category: 'unknown',
       subcategory: 'uncategorized',
+      otherData: otherData,
     );
   }
   
@@ -164,11 +177,9 @@ class Transaction {
     try {
       // Cleanup the date string
       final cleanDateStr = dateStr.trim();
-      print('Cleaning date string for parsing: "$cleanDateStr"');
       
       // Handle empty string
       if (cleanDateStr.isEmpty) {
-        print('Empty date string, using current date');
         return DateTime.now();
       }
       
@@ -179,7 +190,7 @@ class Transaction {
           try {
             return DateTime.parse(cleanDateStr);
           } catch (e) {
-            print('Failed to parse ISO date: $e');
+            return DateTime.now();
           }
           break;
           
@@ -193,7 +204,7 @@ class Transaction {
               final year = int.parse(parts[2].length == 2 ? '20${parts[2]}' : parts[2]);
               return DateTime(year, month, day);
             } catch (e) {
-              print('Failed to parse MM/DD/YYYY date: $e');
+              return DateTime.now();
             }
           }
           break;
@@ -208,7 +219,7 @@ class Transaction {
               final year = int.parse(parts[2].length == 2 ? '20${parts[2]}' : parts[2]);
               return DateTime(year, month, day);
             } catch (e) {
-              print('Failed to parse DD/MM/YYYY date: $e');
+              return DateTime.now();
             }
           }
           break;
@@ -223,7 +234,7 @@ class Transaction {
               final day = int.parse(parts[2]);
               return DateTime(year, month, day);
             } catch (e) {
-              print('Failed to parse YYYY-MM-DD date: $e');
+              return DateTime.now();
             }
           }
           break;
@@ -243,7 +254,7 @@ class Transaction {
             final year = yearStr.length == 2 ? 2000 + int.parse(yearStr) : int.parse(yearStr);
             return DateTime(year, month, day);
           } catch (e) {
-            print('Failed to parse DD.MM.YYYY with dot pattern: $e');
+            return DateTime.now();
           }
         }
       }
@@ -254,10 +265,8 @@ class Transaction {
         return result;
       }
       
-      print('All date parsing attempts failed for: "$cleanDateStr"');
       return DateTime.now(); // Default to current date on error
     } catch (e) {
-      print('Error in date parsing for "$dateStr": $e');
       return DateTime.now(); // Default to current date on error
     }
   }
@@ -265,16 +274,19 @@ class Transaction {
   // Helper method to parse amount string to double
   static double _parseAmount(String amountStr) {
     try {
-      print('Parsing amount string: "$amountStr"');
-      
       // Handle empty string
       if (amountStr.trim().isEmpty) {
-        print('Empty amount string, using 0.0');
         return 0.0;
       }
       
       // Special handling for different number formats
       String cleanStr = amountStr.trim();
+      bool isNegative = cleanStr.startsWith('-');
+      
+      // Remove minus sign temporarily to simplify regex matching
+      if (isNegative) {
+        cleanStr = cleanStr.substring(1);
+      }
       
       // Handle "123,45" (European format with comma as decimal)
       if (RegExp(r'^\d+,\d+$').hasMatch(cleanStr)) {
@@ -296,19 +308,24 @@ class Transaction {
       
       // Handle special case of German banks sometimes using minus sign at the end
       if (cleanStr.endsWith('-')) {
-        cleanStr = '-' + cleanStr.substring(0, cleanStr.length - 1);
+        isNegative = true;
+        cleanStr = cleanStr.substring(0, cleanStr.length - 1);
       }
       
       // Handle negative number in parentheses like "(123.45)"
       if (cleanStr.startsWith('(') && cleanStr.endsWith(')')) {
-        cleanStr = '-' + cleanStr.substring(1, cleanStr.length - 1);
+        isNegative = true;
+        cleanStr = cleanStr.substring(1, cleanStr.length - 1);
+      }
+      
+      // Reapply negative sign if needed
+      if (isNegative) {
+        cleanStr = '-' + cleanStr;
       }
       
       final result = double.parse(cleanStr);
-      print('Parsed amount: $result from "$amountStr"');
       return result;
     } catch (e) {
-      print('Error parsing amount "$amountStr": $e');
       return 0.0; // Default to zero on error
     }
   }

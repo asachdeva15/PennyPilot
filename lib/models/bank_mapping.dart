@@ -30,6 +30,7 @@ class BankMapping {
   final String? amountColumn;
   final String? debitColumn;
   final String? creditColumn;
+  final String? otherColumn;
   
   // Format information
   final String? delimiter;
@@ -47,6 +48,7 @@ class BankMapping {
     this.amountColumn,
     this.debitColumn,
     this.creditColumn,
+    this.otherColumn,
     this.delimiter,
     this.dateFormatType,
     this.amountMappingType = AmountMappingType.single,
@@ -63,6 +65,7 @@ class BankMapping {
       amountColumn: json['amountColumn'] as String?,
       debitColumn: json['debitColumn'] as String?,
       creditColumn: json['creditColumn'] as String?,
+      otherColumn: json['otherColumn'] as String?,
       delimiter: json['delimiter'] as String?,
       dateFormatType: json['dateFormatType'] != null 
           ? DateFormatType.values[json['dateFormatType'] as int]
@@ -83,6 +86,7 @@ class BankMapping {
       'amountColumn': amountColumn,
       'debitColumn': debitColumn,
       'creditColumn': creditColumn,
+      'otherColumn': otherColumn,
       'delimiter': delimiter,
       'dateFormatType': dateFormatType?.index,
       'amountMappingType': amountMappingType.index,

@@ -126,7 +126,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
       if (transaction.category == 'unknown' || transaction.subcategory == 'uncategorized') {
         // Try to find a matching category mapping
         for (var mapping in _categoryMappings) {
-          if (mapping.matchesDescription(transaction.description)) {
+          if (mapping.matchesDescription(transaction.description, otherData: transaction.otherData)) {
             transaction.category = mapping.category;
             transaction.subcategory = mapping.subcategory;
             transaction.matchedKeyword = mapping.keyword;
@@ -224,7 +224,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
       List<Transaction> updatedTransactions = [];
       
       for (var t in _transactions) {
-        if (mapping.matchesDescription(t.description)) {
+        if (mapping.matchesDescription(t.description, otherData: t.otherData)) {
           t.category = category;
           t.subcategory = subcategory;
           t.matchedKeyword = keyword;
@@ -253,91 +253,45 @@ class _TransactionScreenState extends State<TransactionScreen> {
   }
   
   void _showCategoryDialog(Transaction transaction) {
-    // Initialize with transaction's current values or null
+    if (_categoryList == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Category list not loaded yet')),
+      );
+      return;
+    }
+    
     String? selectedCategory = transaction.category;
     String? selectedSubcategory = transaction.subcategory;
-    
-    // Controllers for new category/subcategory input
-    final newCategoryController = TextEditingController();
-    final newSubcategoryController = TextEditingController();
-    
-    // Suggest a keyword from the description
-    final words = transaction.description.split(' ')
-      .where((word) => word.length > 3)
-      .toList();
-    String keywordSuggestion = words.isNotEmpty ? words.first : '';
-    
-    // Create a controller with the initial value
-    final keywordController = TextEditingController(text: keywordSuggestion);
-    
-    // Add a flag for creating mapping rule - default to true for better UX
+    bool isOtherCategory = false;
+    bool isOtherSubcategory = false;
     bool createMappingRule = true;
     
-    // Ensure we have a valid category list
-    if (_categoryList == null) {
-      _categoryList = CategoryList.getDefault();
-      
-      // Add "Other" option
-      if (!_categoryList!.categories.contains('Other')) {
-        _categoryList!.categories.add('Other');
-        _categoryList!.subcategories['Other'] = ['Other'];
-        
-        // Add "Other" to all category subcategories
-        for (final category in _categoryList!.categories) {
-          if (category != 'Other' && 
-              !_categoryList!.subcategories[category]!.contains('Other')) {
-            _categoryList!.subcategories[category]!.add('Other');
-          }
-        }
-      }
-    }
+    // Controllers for new inputs
+    final TextEditingController newCategoryController = TextEditingController();
+    final TextEditingController newSubcategoryController = TextEditingController();
+    final TextEditingController keywordController = TextEditingController();
+    // Initialize keyword with a good guess based on the description
+    keywordController.text = _extractKeywordFromDescription(transaction.description);
     
-    // Debug print to help diagnose the issue
-    debugPrint('Available categories: ${_categoryList!.categories}');
-    debugPrint('Selected category: $selectedCategory');
-    
-    // Make sure selectedCategory exists in our category list
-    if (selectedCategory == null || !_categoryList!.categories.contains(selectedCategory)) {
-      selectedCategory = 'unknown'; // Default to 'unknown' if invalid
-      debugPrint('Corrected selected category to: $selectedCategory');
-    }
+    // Add controller for otherData
+    final TextEditingController otherDataController = TextEditingController(
+      text: (transaction.otherData != null && transaction.otherData!.isNotEmpty) 
+        ? transaction.otherData! 
+        : "NONE"
+    );
     
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setState) {
-            bool isOtherCategory = selectedCategory == 'Other';
-            bool isOtherSubcategory = selectedSubcategory == 'Other';
+            // Generate the list of categories
+            final categories = _categoryList!.categories;
             
-            // Create a local copy of categories for the dropdown
-            final categories = List<String>.from(_categoryList!.categories);
-            
-            // Get subcategories for selected category
+            // Generate the list of subcategories for the selected category
             List<String> subcategories = [];
-            if (selectedCategory != null) {
-              subcategories = List<String>.from(
-                _categoryList!.subcategories[selectedCategory] ?? []
-              );
-              
-              // Validate that the subcategory exists in our list
-              if (selectedSubcategory != null && !subcategories.contains(selectedSubcategory)) {
-                selectedSubcategory = subcategories.isNotEmpty ? subcategories.first : null;
-              }
-            }
-            
-            // Ensure dropdown values match available items
-            bool categoryExists = categories.contains(selectedCategory);
-            bool subcategoryExists = selectedSubcategory != null && subcategories.contains(selectedSubcategory);
-            
-            if (!categoryExists && categories.isNotEmpty) {
-              selectedCategory = categories.first;
-              debugPrint('Adjusted selectedCategory to: $selectedCategory');
-            }
-            
-            if (!subcategoryExists && subcategories.isNotEmpty) {
-              selectedSubcategory = subcategories.first;
-              debugPrint('Adjusted selectedSubcategory to: $selectedSubcategory');
+            if (selectedCategory != null && _categoryList!.subcategories.containsKey(selectedCategory)) {
+              subcategories = _categoryList!.subcategories[selectedCategory]!;
             }
             
             return AlertDialog(
@@ -347,22 +301,41 @@ class _TransactionScreenState extends State<TransactionScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Show transaction description for context
-                    Text(
-                      'Description: ${transaction.description}',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey,
+                    // Transaction details
+                    Text('Description: ${transaction.description}'),
+                    Text('Amount: ${transaction.amount.toStringAsFixed(2)}'),
+                    Text('Date: ${transaction.date.toString().substring(0, 10)}'),
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Other data field
+                    TextField(
+                      controller: otherDataController,
+                      decoration: const InputDecoration(
+                        labelText: 'Other Information',
+                        hintText: 'Additional transaction data',
+                        border: OutlineInputBorder(),
+                      ),
+                      readOnly: true, // Make it read-only since it comes from CSV mapping
+                      style: TextStyle(
+                        fontStyle: transaction.otherData != null && transaction.otherData!.isNotEmpty
+                            ? FontStyle.normal
+                            : FontStyle.italic,
+                        color: transaction.otherData != null && transaction.otherData!.isNotEmpty
+                            ? Colors.black87
+                            : Colors.grey,
                       ),
                     ),
+                    
                     const SizedBox(height: 16),
+                    
                     // Category dropdown
                     DropdownButtonFormField<String>(
                       decoration: const InputDecoration(
                         labelText: 'Category',
                         border: OutlineInputBorder(),
                       ),
-                      value: categoryExists ? selectedCategory : null,
+                      value: selectedCategory,
                       items: categories.map((category) {
                         return DropdownMenuItem(
                           value: category,
@@ -483,59 +456,19 @@ class _TransactionScreenState extends State<TransactionScreen> {
                 ),
                 ElevatedButton(
                   onPressed: () async {
-                    // Handle "Other" category input
-                    if (isOtherCategory && newCategoryController.text.isNotEmpty) {
-                      selectedCategory = newCategoryController.text;
-                      
-                      // Add new category to the list if it doesn't exist
-                      if (!_categoryList!.categories.contains(selectedCategory)) {
-                        _categoryList!.categories.add(selectedCategory!);
-                        _categoryList!.subcategories[selectedCategory!] = ['Other'];
-                        
-                        // Save the updated category list
-                        await _fileService.saveCategoryList(_categoryList!);
-                      }
-                    }
-                    
-                    // Handle "Other" subcategory input
-                    if (isOtherSubcategory && newSubcategoryController.text.isNotEmpty && selectedCategory != null) {
-                      selectedSubcategory = newSubcategoryController.text;
-                      
-                      // Add new subcategory to the list
-                      if (!_categoryList!.subcategories[selectedCategory!]!.contains(selectedSubcategory)) {
-                        _categoryList!.subcategories[selectedCategory!]!.add(selectedSubcategory!);
-                        
-                        // Save the updated category list
-                        await _fileService.saveCategoryList(_categoryList!);
-                      }
-                    }
-                    
-                    // Update the transaction
-                    if (selectedCategory != null && selectedSubcategory != null) {
-                      transaction.category = selectedCategory;
-                      transaction.subcategory = selectedSubcategory;
-                      
-                      Navigator.of(context).pop();
-                      
-                      // Save the transaction with its new category
-                      await _saveTransaction(transaction);
-                      
-                      // Also create a mapping if the checkbox is checked and keyword is provided
-                      final keyword = keywordController.text.trim();
-                      if (createMappingRule && keyword.isNotEmpty) {
-                        await _saveKeywordMapping(
-                          keyword,
-                          selectedCategory!,
-                          selectedSubcategory!,
-                          transaction
-                        );
-                      }
-                    } else {
-                      // Show error if category or subcategory is not selected
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Please select both category and subcategory')),
-                      );
-                    }
+                    await _onSaveCategory(
+                      context,
+                      transaction,
+                      selectedCategory,
+                      selectedSubcategory,
+                      isOtherCategory,
+                      isOtherSubcategory,
+                      newCategoryController,
+                      newSubcategoryController,
+                      keywordController,
+                      otherDataController,
+                      createMappingRule,
+                    );
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.orange,
@@ -548,6 +481,86 @@ class _TransactionScreenState extends State<TransactionScreen> {
         );
       },
     );
+  }
+
+  Future<void> _onSaveCategory(
+    BuildContext context,
+    Transaction transaction,
+    String? selectedCategory,
+    String? selectedSubcategory,
+    bool isOtherCategory,
+    bool isOtherSubcategory,
+    TextEditingController newCategoryController,
+    TextEditingController newSubcategoryController,
+    TextEditingController keywordController,
+    TextEditingController otherDataController,
+    bool createMappingRule,
+  ) async {
+    try {
+      // Handle "Other" category input
+      if (isOtherCategory && newCategoryController.text.isNotEmpty) {
+        selectedCategory = newCategoryController.text;
+        
+        // Add new category to the list if it doesn't exist
+        if (!_categoryList!.categories.contains(selectedCategory)) {
+          _categoryList!.categories.add(selectedCategory!);
+          _categoryList!.subcategories[selectedCategory!] = ['Other'];
+          
+          // Save the updated category list
+          await _fileService.saveCategoryList(_categoryList!);
+        }
+      }
+      
+      // Handle "Other" subcategory input
+      if (isOtherSubcategory && newSubcategoryController.text.isNotEmpty && selectedCategory != null) {
+        selectedSubcategory = newSubcategoryController.text;
+        
+        // Add new subcategory to the list
+        if (!_categoryList!.subcategories[selectedCategory!]!.contains(selectedSubcategory)) {
+          _categoryList!.subcategories[selectedCategory!]!.add(selectedSubcategory!);
+          
+          // Save the updated category list
+          await _fileService.saveCategoryList(_categoryList!);
+        }
+      }
+      
+      // Update the transaction
+      if (selectedCategory != null && selectedSubcategory != null) {
+        transaction.category = selectedCategory;
+        transaction.subcategory = selectedSubcategory;
+        
+        // Set the otherData field
+        transaction.otherData = otherDataController.text.trim() != "NONE" ? 
+                              otherDataController.text.trim() : 
+                              transaction.otherData;
+        
+        Navigator.of(context).pop();
+        
+        // Save the transaction with its new category
+        await _saveTransaction(transaction);
+        
+        // Also create a mapping if the checkbox is checked and keyword is provided
+        final keyword = keywordController.text.trim();
+        if (createMappingRule && keyword.isNotEmpty) {
+          await _saveKeywordMapping(
+            keyword,
+            selectedCategory!,
+            selectedSubcategory!,
+            transaction
+          );
+        }
+      } else {
+        // Show error if category or subcategory is not selected
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select both category and subcategory')),
+        );
+      }
+    } catch (e) {
+      print('Error saving transaction: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error saving transaction: $e')),
+      );
+    }
   }
 
   @override
@@ -741,5 +754,21 @@ class _TransactionScreenState extends State<TransactionScreen> {
         ],
       ),
     );
+  }
+
+  // Helper method to extract a keyword from a transaction description
+  String _extractKeywordFromDescription(String description) {
+    // Try to extract a potential keyword from the description
+    final words = description.split(' ')
+      .where((word) => word.length > 3)
+      .toList();
+    
+    if (words.isNotEmpty) {
+      // Default to the longest word as a potential keyword
+      words.sort((a, b) => b.length.compareTo(a.length));
+      return words.first;
+    }
+    
+    return '';
   }
 } 

@@ -36,6 +36,7 @@ class _MappingScreenState extends State<MappingScreen> {
   String? _selectedDebitColumn;     // For separate columns type
   String? _selectedCreditColumn;    // For separate columns type
   String? _selectedDescriptionColumn;
+  String? _selectedOtherColumn;     // Added for additional custom column
   
   // Date format detection and selection
   DateFormatType _detectedDateFormat = DateFormatType.mmddyyyy; // Default to US format
@@ -49,6 +50,7 @@ class _MappingScreenState extends State<MappingScreen> {
   // --- Add standard names for separate columns ---
   static const String standardDebit = 'Debit Amount';
   static const String standardCredit = 'Credit Amount';
+  static const String standardOther = 'Other (Optional)';
   // ---------------------------------------------
 
   final FileService _fileService = FileService(); // Instance of the service
@@ -333,6 +335,13 @@ class _MappingScreenState extends State<MappingScreen> {
                 onChanged: (value) { setState(() { _selectedDescriptionColumn = value; }); },
                  isRequired: true, // Assuming description is required
               ),
+              _buildMappingRow(
+                standardLabel: standardOther,
+                options: _actualHeaders,
+                selectedValue: _selectedOtherColumn,
+                onChanged: (value) { setState(() { _selectedOtherColumn = value; }); },
+                isRequired: false, // This is optional
+              ),
               const SizedBox(height: 32),
               Center(
                 child: ElevatedButton(
@@ -408,6 +417,7 @@ class _MappingScreenState extends State<MappingScreen> {
         amountColumn: _amountMappingType == AmountMappingType.single ? _selectedAmountColumn : null,
         debitColumn: _amountMappingType == AmountMappingType.separate ? _selectedDebitColumn : null,
         creditColumn: _amountMappingType == AmountMappingType.separate ? _selectedCreditColumn : null,
+        otherColumn: _selectedOtherColumn,
         delimiter: widget.detectedDelimiter,
         dateFormatType: _selectedDateFormat, // Save the selected date format
       );

@@ -1344,7 +1344,6 @@ class FileService {
     String? bankName,
     BankMapping? mapping,
   ) async {
-    print('Processing CSV file: ${file.path}');
     try {
       if (bankName == null || mapping == null) {
         // Log the issue but continue with default values
@@ -1364,8 +1363,6 @@ class FileService {
             dateFormatType: DateFormatType.iso,
             amountMappingType: AmountMappingType.single
           );
-          
-          print('Created default mapping for ${bankName}');
         }
       }
       
@@ -1374,7 +1371,6 @@ class FileService {
       
       // Parse the CSV with correct delimiter
       final String delimiter = mapping.delimiter ?? ',';
-      print('Using delimiter: "$delimiter"');
       
       final List<List<dynamic>> rows = CsvToListConverter(
         shouldParseNumbers: false,
@@ -1383,16 +1379,12 @@ class FileService {
       ).convert(csvString);
       
       if (rows.isEmpty) {
-        print('No rows found in CSV file');
         return [];
       }
       
       // Get header row (ensure index is valid)
       final headerRowIndex = mapping.headerRowIndex < rows.length ? mapping.headerRowIndex : 0;
       final headerRow = rows[headerRowIndex];
-      
-      print('Using header row: $headerRowIndex');
-      print('Header columns: ${headerRow.join(", ")}');
       
       // Create a map of column names to indices
       Map<String, int> columnMap = {};
@@ -1404,19 +1396,6 @@ class FileService {
         columnMap[colName.toLowerCase().trim()] = i;
       }
       
-      // Log the column mapping
-      print('Column mappings:');
-      print('Date column: ${mapping.dateColumn}');
-      print('Description column: ${mapping.descriptionColumn}');
-      print('Amount type: ${mapping.amountMappingType}');
-      if (mapping.amountMappingType == AmountMappingType.single) {
-        print('Amount column: ${mapping.amountColumn}');
-      } else {
-        print('Debit column: ${mapping.debitColumn}');
-        print('Credit column: ${mapping.creditColumn}');
-      }
-      print('Available columns in CSV: ${columnMap.keys.toList()}');
-      
       // Extract transactions based on the mapping
       List<Transaction> transactions = [];
       
@@ -1426,7 +1405,6 @@ class FileService {
         
         // Skip rows that don't have enough columns
         if (dataRow.length < headerRow.length) {
-          print('Skipping row $i: Not enough columns');
           continue;
         }
         
@@ -1472,16 +1450,12 @@ class FileService {
         final dateValue = getColumnValue(mapping.dateColumn);
         if (dateValue != null) {
           transactionData['date'] = dateValue;
-        } else {
-          print('Warning: Date column "${mapping.dateColumn}" not found in row data for row $i');
         }
         
         // Map description column
         final descValue = getColumnValue(mapping.descriptionColumn);
         if (descValue != null) {
           transactionData['description'] = descValue;
-        } else {
-          print('Warning: Description column "${mapping.descriptionColumn}" not found in row data for row $i');
         }
         
         // Map amount columns based on mapping type
@@ -1490,23 +1464,25 @@ class FileService {
           final amountValue = getColumnValue(mapping.amountColumn);
           if (amountValue != null) {
             transactionData['amount'] = amountValue;
-          } else {
-            print('Warning: Amount column "${mapping.amountColumn}" not found in row data for row $i');
           }
         } else {
           // Separate debit/credit columns
           final debitValue = getColumnValue(mapping.debitColumn);
           if (debitValue != null) {
             transactionData['debit'] = debitValue;
-          } else {
-            print('Warning: Debit column "${mapping.debitColumn}" not found in row data for row $i');
           }
           
           final creditValue = getColumnValue(mapping.creditColumn);
           if (creditValue != null) {
             transactionData['credit'] = creditValue;
-          } else {
-            print('Warning: Credit column "${mapping.creditColumn}" not found in row data for row $i');
+          }
+        }
+        
+        // Map other column if available
+        if (mapping.otherColumn != null && mapping.otherColumn!.isNotEmpty) {
+          final otherValue = getColumnValue(mapping.otherColumn);
+          if (otherValue != null) {
+            transactionData['otherData'] = otherValue;
           }
         }
         
@@ -1519,12 +1495,10 @@ class FileService {
           );
           transactions.add(transaction);
         } catch (e) {
-          print('Error creating transaction from row $i: $e');
           // Skip this row and continue
         }
       }
       
-      print('Parsed ${transactions.length} transactions from CSV');
       return transactions;
     } catch (e) {
       print('Error processing CSV file: $e');
@@ -1744,6 +1718,88 @@ class FileService {
       return issues;
     } catch (e) {
       return {'general': 'Error validating bank mappings: $e'};
+    }
+  }
+
+  // Check for CSV files in Android Documents folder
+  Future<List<File>> checkDocumentsForCSVFiles() async {
+    List<File> csvFiles = [];
+    
+    if (Platform.isAndroid) {
+      try {
+        // First try using the storage permissions to find external directories
+        try {
+          // Get external storage directory
+          final extDir = await getExternalStorageDirectory();
+          if (extDir != null) {
+            // Navigate up to external storage root
+            Directory? rootDir = extDir;
+            while (rootDir != null && path.basename(rootDir.path) != 'Android') {
+              final parent = Directory(path.dirname(rootDir.path));
+              if (await parent.exists()) {
+                rootDir = parent;
+              } else {
+                break;
+              }
+            }
+            
+            // Check common locations relative to the external storage
+            if (rootDir != null) {
+              final docDir = Directory('${rootDir.path}/Documents');
+              if (await docDir.exists()) {
+                print('Found Documents directory: ${docDir.path}');
+                await _scanDirectoryForCSVFiles(docDir, csvFiles);
+              }
+              
+              // Also check Download folder
+              final downloadDir = Directory('${rootDir.path}/Download');
+              if (await downloadDir.exists()) {
+                print('Found Download directory: ${downloadDir.path}');
+                await _scanDirectoryForCSVFiles(downloadDir, csvFiles);
+              }
+            }
+          }
+        } catch (e) {
+          print('Error finding external storage: $e');
+        }
+        
+        // If no files found, try common paths as fallback
+        if (csvFiles.isEmpty) {
+          final List<String> possibleDocumentsPaths = [
+            '/storage/emulated/0/Documents',
+            '/storage/emulated/0/Document',
+            '/sdcard/Documents',
+            '/storage/emulated/0/Download',
+          ];
+          
+          for (final dirPath in possibleDocumentsPaths) {
+            final directory = Directory(dirPath);
+            if (await directory.exists()) {
+              print('Found directory: $dirPath');
+              await _scanDirectoryForCSVFiles(directory, csvFiles);
+            }
+          }
+        }
+      } catch (e) {
+        print('Error checking for CSV files: $e');
+      }
+    }
+    
+    return csvFiles;
+  }
+  
+  // Helper to scan directory for CSV files
+  Future<void> _scanDirectoryForCSVFiles(Directory directory, List<File> csvFiles) async {
+    try {
+      final List<FileSystemEntity> entities = await directory.list().toList();
+      for (final entity in entities) {
+        if (entity is File && entity.path.toLowerCase().endsWith('.csv')) {
+          print('Found CSV file: ${entity.path}');
+          csvFiles.add(entity);
+        }
+      }
+    } catch (e) {
+      print('Error listing files in ${directory.path}: $e');
     }
   }
 } 
