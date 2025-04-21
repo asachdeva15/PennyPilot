@@ -797,6 +797,56 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
     }
   }
 
+  Future<void> _updateTransactionAndCreateMapping(
+    Transaction transaction,
+    String? category,
+    String? subcategory,
+    String? otherData,
+    String keyword
+  ) async {
+    try {
+      // First update the transaction
+      await _updateTransaction(transaction, category: category, subcategory: subcategory, otherData: otherData);
+      
+      if (keyword.isEmpty || category == null) {
+        return;
+      }
+      
+      // Create and save the category mapping
+      final newMapping = CategoryMapping(
+        keyword: keyword,
+        category: category,
+        subcategory: subcategory ?? '',
+      );
+      
+      final success = await _fileService.saveCategoryMapping(newMapping);
+      
+      if (success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Transaction updated and rule created for "$keyword"')),
+          );
+        }
+        
+        // Reload data to apply the new rule
+        await _loadData();
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to create rule')),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error updating transaction and creating mapping: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1141,6 +1191,9 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
     String? selectedCategory = transaction.category ?? suggestedCategory;
     String? selectedSubcategory = transaction.subcategory;
     String? otherData = transaction.otherData;
+    bool isOtherCategory = false;
+    bool isOtherSubcategory = false;
+    bool createMappingRule = true;
     
     // For new category/subcategory input
     final TextEditingController newCategoryController = TextEditingController();
@@ -1150,12 +1203,17 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         ? transaction.otherData! 
         : "NONE"
     );
-    bool isAddingNewCategory = false;
-    bool isAddingNewSubcategory = false;
     
-    // Select subcategory for streaming services
-    if (selectedCategory == 'Lifestyle' && transaction.description.toLowerCase().contains('netflix')) {
-      selectedSubcategory = 'Subscriptions';
+    // Add keyword controller with extracted best guess
+    final TextEditingController keywordController = TextEditingController();
+    // Extract a good keyword from description
+    final words = transaction.description.split(' ')
+      .where((word) => word.length > 3)
+      .toList();
+    
+    if (words.isNotEmpty) {
+      words.sort((a, b) => b.length.compareTo(a.length));
+      keywordController.text = words.first;
     }
     
     showDialog(
@@ -1164,13 +1222,14 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Update Transaction Category'),
+              title: const Text('Categorize Transaction'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Transaction: ${transaction.description}'),
+                    // Transaction details
+                    Text('Description: ${transaction.description}'),
                     Text('Amount: ${NumberFormat.currency(locale: 'de_DE', symbol: '€').format(transaction.amount)}'),
                     Text('Date: ${DateFormat('yyyy-MM-dd').format(transaction.date)}'),
                     const SizedBox(height: 16),
@@ -1181,6 +1240,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                       decoration: const InputDecoration(
                         labelText: 'Other Information',
                         hintText: 'Additional transaction data',
+                        border: OutlineInputBorder(),
                       ),
                       readOnly: true,
                       style: TextStyle(
@@ -1188,184 +1248,164 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                             ? FontStyle.normal
                             : FontStyle.italic,
                         color: transaction.otherData != null && transaction.otherData!.isNotEmpty
-                            ? Colors.black
+                            ? Colors.black87
                             : Colors.grey,
                       ),
                     ),
                     
                     const SizedBox(height: 16),
                     
-                    // Category selection or input field
-                    if (!isAddingNewCategory) ...[
-                      Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<String>(
-                              decoration: const InputDecoration(
-                                labelText: 'Category',
-                              ),
-                              isExpanded: true,
-                              value: selectedCategory,
-                              items: [
-                                const DropdownMenuItem<String>(
-                                  value: null,
-                                  child: Text('Select Category'),
-                                ),
-                                ..._categories.map((category) => DropdownMenuItem<String>(
-                                  value: category,
-                                  child: Text(category),
-                                )).toList(),
-                              ],
-                              onChanged: (value) {
-                                setDialogState(() {
-                                  selectedCategory = value;
-                                  selectedSubcategory = null; // Reset subcategory when category changes
-                                });
-                              },
-                            ),
+                    // Category dropdown
+                    if (!isOtherCategory) ...[
+                      DropdownButtonFormField<String>(
+                        decoration: const InputDecoration(
+                          labelText: 'Category',
+                          border: OutlineInputBorder(),
+                        ),
+                        isExpanded: true,
+                        value: selectedCategory,
+                        items: [
+                          const DropdownMenuItem<String>(
+                            value: null,
+                            child: Text('Select Category'),
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.add_circle_outline),
-                            tooltip: 'Add New Category',
-                            onPressed: () {
-                              setDialogState(() {
-                                isAddingNewCategory = true;
-                              });
-                            },
-                          ),
+                          ..._categories.map((category) => DropdownMenuItem<String>(
+                            value: category,
+                            child: Text(category),
+                          )).toList(),
                         ],
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selectedCategory = value;
+                            selectedSubcategory = null; // Reset subcategory when category changes
+                            isOtherCategory = value == 'Other';
+                          });
+                        },
                       ),
                     ] else ...[
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: newCategoryController,
-                              decoration: const InputDecoration(
-                                labelText: 'New Category Name',
-                                hintText: 'Enter new category',
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.check_circle_outline),
-                            tooltip: 'Confirm New Category',
-                            onPressed: () {
-                              final newCategory = newCategoryController.text.trim();
-                              if (newCategory.isNotEmpty) {
-                                setDialogState(() {
-                                  if (!_categories.contains(newCategory)) {
-                                    _categories.add(newCategory);
-                                    _categories.sort();
-                                    _subcategories[newCategory] = [];
-                                  }
-                                  selectedCategory = newCategory;
-                                  isAddingNewCategory = false;
-                                  selectedSubcategory = null;
-                                });
-                              }
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.cancel_outlined),
-                            tooltip: 'Cancel',
-                            onPressed: () {
-                              setDialogState(() {
-                                isAddingNewCategory = false;
-                              });
-                            },
-                          ),
-                        ],
+                      // "Other" category text field
+                      TextField(
+                        controller: newCategoryController,
+                        decoration: const InputDecoration(
+                          labelText: 'New Category Name',
+                          hintText: 'Enter a name for your new category',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.only(top: 4.0, left: 4.0),
+                        child: Text(
+                          'Please provide a specific category name instead of using "Other"',
+                          style: TextStyle(fontSize: 12, color: Colors.red, fontStyle: FontStyle.italic),
+                        ),
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.arrow_back),
+                        label: const Text('Back to Categories'),
+                        onPressed: () {
+                          setDialogState(() {
+                            isOtherCategory = false;
+                          });
+                        },
                       ),
                     ],
                     
                     const SizedBox(height: 16),
                     
-                    // Subcategory dropdown or input field (only show if category is selected)
-                    if (selectedCategory != null) ...[
-                      if (!isAddingNewSubcategory) ...[
-                        Row(
-                          children: [
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                decoration: const InputDecoration(
-                                  labelText: 'Subcategory',
-                                ),
-                                isExpanded: true,
-                                value: selectedSubcategory,
-                                items: [
-                                  const DropdownMenuItem<String>(
-                                    value: null,
-                                    child: Text('Select Subcategory'),
-                                  ),
-                                  ...(_subcategories[selectedCategory] ?? []).map((subcategory) => DropdownMenuItem<String>(
-                                    value: subcategory,
-                                    child: Text(subcategory),
-                                  )).toList(),
-                                ],
-                                onChanged: (value) {
-                                  setDialogState(() {
-                                    selectedSubcategory = value;
-                                  });
-                                },
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.add_circle_outline),
-                              tooltip: 'Add New Subcategory',
-                              onPressed: () {
-                                setDialogState(() {
-                                  isAddingNewSubcategory = true;
-                                });
-                              },
-                            ),
-                          ],
+                    // Subcategory dropdown (only show if category is selected)
+                    if (selectedCategory != null && !isOtherSubcategory) ...[
+                      DropdownButtonFormField<String>(
+                        decoration: const InputDecoration(
+                          labelText: 'Subcategory',
+                          border: OutlineInputBorder(),
                         ),
-                      ] else ...[
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: newSubcategoryController,
-                                decoration: const InputDecoration(
-                                  labelText: 'New Subcategory Name',
-                                  hintText: 'Enter new subcategory',
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.check_circle_outline),
-                              tooltip: 'Confirm New Subcategory',
-                              onPressed: () {
-                                final newSubcategory = newSubcategoryController.text.trim();
-                                if (newSubcategory.isNotEmpty && selectedCategory != null) {
-                                  setDialogState(() {
-                                    if (!_subcategories.containsKey(selectedCategory)) {
-                                      _subcategories[selectedCategory!] = [];
-                                    }
-                                    if (!_subcategories[selectedCategory]!.contains(newSubcategory)) {
-                                      _subcategories[selectedCategory]!.add(newSubcategory);
-                                      _subcategories[selectedCategory]!.sort();
-                                    }
-                                    selectedSubcategory = newSubcategory;
-                                    isAddingNewSubcategory = false;
-                                  });
-                                }
-                              },
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.cancel_outlined),
-                              tooltip: 'Cancel',
-                              onPressed: () {
-                                setDialogState(() {
-                                  isAddingNewSubcategory = false;
-                                });
-                              },
-                            ),
-                          ],
+                        isExpanded: true,
+                        value: selectedSubcategory,
+                        items: _subcategories.containsKey(selectedCategory)
+                            ? _subcategories[selectedCategory]!.map((subcategory) {
+                                return DropdownMenuItem<String>(
+                                  value: subcategory,
+                                  child: Text(subcategory),
+                                );
+                              }).toList()
+                            : [],
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selectedSubcategory = value;
+                            isOtherSubcategory = value == 'Other';
+                          });
+                        },
+                      ),
+                    ] else if (selectedCategory != null && isOtherSubcategory) ...[
+                      // "Other" subcategory text field
+                      TextField(
+                        controller: newSubcategoryController,
+                        decoration: const InputDecoration(
+                          labelText: 'New Subcategory Name',
+                          hintText: 'Enter a name for your new subcategory',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.only(top: 4.0, left: 4.0),
+                        child: Text(
+                          'Please provide a specific subcategory name instead of using "Other"',
+                          style: TextStyle(fontSize: 12, color: Colors.red, fontStyle: FontStyle.italic),
+                        ),
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.arrow_back),
+                        label: const Text('Back to Subcategories'),
+                        onPressed: () {
+                          setDialogState(() {
+                            isOtherSubcategory = false;
+                          });
+                        },
+                      ),
+                    ],
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Keyword input for mapping
+                    TextField(
+                      controller: keywordController,
+                      decoration: const InputDecoration(
+                        labelText: 'Keyword for mapping',
+                        hintText: 'Enter a keyword to match similar transactions',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 8),
+                    
+                    // Checkbox to create mapping rule
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: createMappingRule,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              createMappingRule = value ?? false;
+                            });
+                          },
+                        ),
+                        const Expanded(
+                          child: Text(
+                            'Create rule for similar transactions',
+                            style: TextStyle(fontSize: 14),
+                          ),
                         ),
                       ],
-                    ],
+                    ),
+                    
+                    if (createMappingRule)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 32.0),
+                        child: Text(
+                          'Transactions containing this keyword will be automatically categorized',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -1385,39 +1425,58 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                   child: const Text('Delete'),
                 ),
                 ElevatedButton(
-                  onPressed: () {
+                  onPressed: () async {
+                    // Handle "Other" category input
+                    if (isOtherCategory && newCategoryController.text.isNotEmpty) {
+                      final newCategory = newCategoryController.text.trim();
+                      if (!_categories.contains(newCategory)) {
+                        _categories.add(newCategory);
+                        _categories.sort();
+                        _subcategories[newCategory] = ['Other'];
+                      }
+                      selectedCategory = newCategory;
+                    }
+                    
+                    // Handle "Other" subcategory input
+                    if (isOtherSubcategory && newSubcategoryController.text.isNotEmpty && selectedCategory != null) {
+                      final newSubcategory = newSubcategoryController.text.trim();
+                      if (!_subcategories[selectedCategory]!.contains(newSubcategory)) {
+                        _subcategories[selectedCategory]!.add(newSubcategory);
+                      }
+                      selectedSubcategory = newSubcategory;
+                    }
+                    
                     Navigator.of(context).pop();
-                    _updateTransaction(
-                      transaction, 
-                      category: selectedCategory,
-                      subcategory: selectedSubcategory,
-                      otherData: otherDataController.text.trim() != "NONE" ? otherDataController.text.trim() : transaction.otherData,
-                    );
-                  },
-                  child: const Text('Update'),
-                ),
-                if (selectedCategory != null && transaction.description.isNotEmpty)
-                  TextButton(
-                    onPressed: () async {
-                      Navigator.of(context).pop();
-                      // First update the transaction
+                    
+                    final String? otherDataValue = otherDataController.text.trim() != "NONE" ? 
+                                                     otherDataController.text.trim() : 
+                                                     transaction.otherData;
+                    
+                    // Handle based on whether we're creating a rule
+                    if (createMappingRule && keywordController.text.trim().isNotEmpty && selectedCategory != null) {
+                      // Both update transaction and create rule in one operation
+                      await _updateTransactionAndCreateMapping(
+                        transaction,
+                        selectedCategory,
+                        selectedSubcategory,
+                        otherDataValue,
+                        keywordController.text.trim()
+                      );
+                    } else {
+                      // Just update the transaction
                       await _updateTransaction(
-                        transaction, 
+                        transaction,
                         category: selectedCategory,
                         subcategory: selectedSubcategory,
-                        otherData: otherDataController.text.trim() != "NONE" ? otherDataController.text.trim() : transaction.otherData,
+                        otherData: otherDataValue,
                       );
-                      // Then show dialog to create rule
-                      if (mounted) {
-                        _showAddKeywordMappingDialog(
-                          transaction.description,
-                          selectedCategory!,
-                          selectedSubcategory,
-                        );
-                      }
-                    },
-                    child: const Text('Update & Create Rule'),
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
                   ),
+                  child: const Text('Save'),
+                ),
               ],
             );
           },
@@ -1461,106 +1520,6 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
     }
     
     return null;
-  }
-
-  void _showAddKeywordMappingDialog(String description, String category, String? subcategory) {
-    String keyword = '';
-    
-    // Try to extract a potential keyword from the description
-    final words = description.split(' ')
-      .where((word) => word.length > 3)
-      .toList();
-    
-    if (words.isNotEmpty) {
-      // Default to the longest word as a potential keyword
-      words.sort((a, b) => b.length.compareTo(a.length));
-      keyword = words.first;
-    }
-    
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Create Category Mapping Rule'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Description: $description'),
-              const SizedBox(height: 16),
-              TextField(
-                decoration: const InputDecoration(
-                  labelText: 'Keyword',
-                  hintText: 'Enter keyword to match in descriptions',
-                ),
-                controller: TextEditingController(text: keyword),
-                onChanged: (value) {
-                  keyword = value;
-                },
-              ),
-              const SizedBox(height: 8),
-              Text('Category: $category'),
-              if (subcategory != null)
-                Text('Subcategory: $subcategory'),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                
-                if (keyword.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Keyword cannot be empty')),
-                  );
-                  return;
-                }
-                
-                try {
-                  // Create and save the category mapping
-                  final newMapping = CategoryMapping(
-                    keyword: keyword,
-                    category: category,
-                    subcategory: subcategory ?? '',
-                  );
-                  
-                  final success = await _fileService.saveCategoryMapping(newMapping);
-                  
-                  if (success) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Rule created for keyword "$keyword"')),
-                      );
-                    }
-                    
-                    // Reload data to apply the new rule
-                    await _loadData();
-                  } else {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Failed to create rule')),
-                      );
-                    }
-                  }
-                } catch (e) {
-                  print('Error creating category mapping: $e');
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Error creating rule: $e')),
-                    );
-                  }
-                }
-              },
-              child: const Text('Create Rule'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   // Add this method to handle transaction deletion

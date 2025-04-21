@@ -50,6 +50,12 @@ class _CategoryMappingScreenState extends ConsumerState<CategoryMappingScreen> {
     _editExactMatch = existingMapping?.exactMatch ?? false;
     
     final categoryList = CategoryList.getDefault();
+    bool isOtherCategory = false;
+    bool isOtherSubcategory = false;
+    
+    // Controllers for new category/subcategory input
+    final TextEditingController newCategoryController = TextEditingController();
+    final TextEditingController newSubcategoryController = TextEditingController();
     
     showDialog(
       context: context,
@@ -73,51 +79,133 @@ class _CategoryMappingScreenState extends ConsumerState<CategoryMappingScreen> {
                   
                   const SizedBox(height: 16),
                   
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(
-                      labelText: 'Category',
-                      border: OutlineInputBorder(),
+                  // Category selection
+                  if (!isOtherCategory) ...[
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(
+                        labelText: 'Category',
+                        border: OutlineInputBorder(),
+                      ),
+                      value: _editCategory,
+                      items: [
+                        ...categoryList.categories.map((category) {
+                          return DropdownMenuItem(
+                            value: category,
+                            child: Text(category),
+                          );
+                        }).toList(),
+                        const DropdownMenuItem(
+                          value: 'Other',
+                          child: Text('Other (Create New)'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          if (value == 'Other') {
+                            isOtherCategory = true;
+                            _editCategory = null;
+                          } else {
+                            _editCategory = value;
+                          }
+                          _editSubcategory = null;
+                          isOtherSubcategory = false;
+                        });
+                      },
+                      validator: (value) => value == null ? 'Required' : null,
                     ),
-                    value: _editCategory,
-                    items: categoryList.categories.map((category) {
-                      return DropdownMenuItem(
-                        value: category,
-                        child: Text(category),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      setState(() {
-                        _editCategory = value;
-                        _editSubcategory = null;
-                      });
-                    },
-                    validator: (value) => value == null ? 'Required' : null,
-                  ),
+                  ] else ...[
+                    // New category input field
+                    TextField(
+                      controller: newCategoryController,
+                      decoration: const InputDecoration(
+                        labelText: 'New Category Name',
+                        hintText: 'Enter a name for your new category',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4.0, left: 4.0),
+                      child: Text(
+                        'Please provide a specific category name instead of using "Other"',
+                        style: TextStyle(fontSize: 12, color: Colors.red, fontStyle: FontStyle.italic),
+                      ),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.arrow_back),
+                      label: const Text('Back to Categories'),
+                      onPressed: () {
+                        setState(() {
+                          isOtherCategory = false;
+                          _editCategory = null;
+                        });
+                      },
+                    ),
+                  ],
                   
                   const SizedBox(height: 16),
                   
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(
-                      labelText: 'Subcategory',
-                      border: OutlineInputBorder(),
+                  // Subcategory selection (only if a category is selected)
+                  if (_editCategory != null && !isOtherSubcategory) ...[
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(
+                        labelText: 'Subcategory',
+                        border: OutlineInputBorder(),
+                      ),
+                      value: _editSubcategory,
+                      items: [
+                        ...(categoryList.subcategories.containsKey(_editCategory)
+                          ? categoryList.subcategories[_editCategory]!.map((subcategory) {
+                              return DropdownMenuItem(
+                                value: subcategory,
+                                child: Text(subcategory),
+                              );
+                            }).toList()
+                          : []),
+                        const DropdownMenuItem(
+                          value: 'Other',
+                          child: Text('Other (Create New)'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          if (value == 'Other') {
+                            isOtherSubcategory = true;
+                            _editSubcategory = null;
+                          } else {
+                            _editSubcategory = value;
+                          }
+                        });
+                      },
+                      validator: (value) => value == null ? 'Required' : null,
                     ),
-                    value: _editSubcategory,
-                    items: (_editCategory != null && 
-                           categoryList.subcategories.containsKey(_editCategory))
-                      ? categoryList.subcategories[_editCategory]!.map((subcategory) {
-                          return DropdownMenuItem(
-                            value: subcategory,
-                            child: Text(subcategory),
-                          );
-                        }).toList()
-                      : [],
-                    onChanged: (value) {
-                      setState(() {
-                        _editSubcategory = value;
-                      });
-                    },
-                    validator: (value) => value == null ? 'Required' : null,
-                  ),
+                  ] else if (_editCategory != null && isOtherSubcategory) ...[
+                    // New subcategory input field
+                    TextField(
+                      controller: newSubcategoryController,
+                      decoration: const InputDecoration(
+                        labelText: 'New Subcategory Name',
+                        hintText: 'Enter a name for your new subcategory',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4.0, left: 4.0),
+                      child: Text(
+                        'Please provide a specific subcategory name instead of using "Other"',
+                        style: TextStyle(fontSize: 12, color: Colors.red, fontStyle: FontStyle.italic),
+                      ),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.arrow_back),
+                      label: const Text('Back to Subcategories'),
+                      onPressed: () {
+                        setState(() {
+                          isOtherSubcategory = false;
+                          _editSubcategory = null;
+                        });
+                      },
+                    ),
+                  ],
                   
                   const SizedBox(height: 16),
                   
@@ -152,6 +240,31 @@ class _CategoryMappingScreenState extends ConsumerState<CategoryMappingScreen> {
               ),
               ElevatedButton(
                 onPressed: () async {
+                  // Handle "Other" category input
+                  if (isOtherCategory && newCategoryController.text.isNotEmpty) {
+                    final newCategory = newCategoryController.text.trim();
+                    _editCategory = newCategory;
+                    
+                    // Add to category list if it doesn't exist
+                    if (!categoryList.categories.contains(newCategory)) {
+                      categoryList.categories.add(newCategory);
+                      categoryList.subcategories[newCategory] = ['Other'];
+                      await ref.read(categoryProvider.notifier).addCategory(newCategory);
+                    }
+                  }
+                  
+                  // Handle "Other" subcategory input
+                  if (isOtherSubcategory && newSubcategoryController.text.isNotEmpty && _editCategory != null) {
+                    final newSubcategory = newSubcategoryController.text.trim();
+                    _editSubcategory = newSubcategory;
+                    
+                    // Add to subcategory list if it doesn't exist
+                    if (!categoryList.subcategories[_editCategory]!.contains(newSubcategory)) {
+                      categoryList.subcategories[_editCategory]!.add(newSubcategory);
+                      await ref.read(categoryProvider.notifier).addSubcategory(_editCategory!, newSubcategory);
+                    }
+                  }
+                
                   if (_keywordController.text.trim().isEmpty ||
                       _editCategory == null ||
                       _editSubcategory == null) {

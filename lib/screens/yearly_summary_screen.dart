@@ -90,15 +90,25 @@ class _YearlySummaryScreenState extends State<YearlySummaryScreen> {
   }
 
   void _navigateToMonth(int month) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => MonthlySummaryScreen(
-          year: widget.year,
-          month: month,
+    print('Navigating to month: $month');
+    try {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => MonthlySummaryScreen(
+            year: widget.year,
+            month: month,
+          ),
         ),
-      ),
-    );
+      );
+      print('Navigation successful');
+    } catch (e) {
+      print('Navigation error: $e');
+      // Show a snackbar to notify the user of the error
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error navigating to month details: $e')),
+      );
+    }
   }
 
   @override
@@ -381,11 +391,11 @@ class _YearlySummaryScreenState extends State<YearlySummaryScreen> {
 
   Widget _buildMonthlyBreakdownCard() {
     final summary = _yearlySummary!;
-    final currencyFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final currencyFormat = NumberFormat.currency(symbol: '€', decimalDigits: 2);
     final months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     final monthNames = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'January', 'February', 'March', 'April', 'May', 'June', 
+      'July', 'August', 'September', 'October', 'November', 'December'
     ];
     
     return Card(
@@ -403,69 +413,150 @@ class _YearlySummaryScreenState extends State<YearlySummaryScreen> {
               ),
             ),
             const Divider(),
-            const SizedBox(height: 8),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                childAspectRatio: 1.5,
-                crossAxisSpacing: 10,
-                mainAxisSpacing: 10,
-              ),
-              itemCount: months.length,
-              itemBuilder: (context, index) {
+            
+            // Months list
+            Column(
+              children: List.generate(months.length, (index) {
                 final month = months[index];
                 final monthName = monthNames[index];
                 final monthData = summary.monthlySummaries[month];
                 
-                // Calculate opacity based on income+expenses (as a marker of activity)
-                double opacity = 0.3; // Default low opacity for months with no data
-                
-                if (monthData != null) {
-                  final total = monthData.totalIncome + monthData.totalExpenses;
-                  // Normalize based on the highest month's activity to give relative scale
-                  final maxTotal = summary.monthlySummaries.values
-                      .map((m) => m.totalIncome + m.totalExpenses)
-                      .reduce((a, b) => a > b ? a : b);
-                  
-                  opacity = total > 0 ? 0.3 + (total / maxTotal) * 0.7 : 0.3;
+                // Skip months with no data
+                if (monthData == null) {
+                  return const SizedBox.shrink();
                 }
                 
-                return InkWell(
-                  onTap: () => _navigateToMonth(month),
+                // Use GestureDetector to make the entire row tappable
+                return GestureDetector(
+                  onTap: () {
+                    print('Month tapped: $monthName');
+                    _navigateToMonth(month);
+                  },
+                  // Highlight effect when tapped
                   child: Container(
-                    decoration: BoxDecoration(
-                      color: monthData != null
-                          ? Colors.blueGrey.withOpacity(opacity)
-                          : Colors.grey.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+                    margin: const EdgeInsets.only(top: 16),
+                    color: Colors.transparent, // Important for tap detection
                     child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          monthName,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                        // Month header with highlight color
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE68A00),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                monthName,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const Icon(
+                                Icons.chevron_right,
+                                color: Colors.white,
+                              ),
+                            ],
                           ),
                         ),
-                        if (monthData != null) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            currencyFormat.format(monthData.netSavings),
+                        
+                        // Financial details
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                          child: Row(
+                            children: [
+                              // Income
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Income',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                    Text(
+                                      currencyFormat.format(monthData.totalIncome),
+                                      style: const TextStyle(
+                                        color: Colors.green,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              
+                              // Expenses
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Expenses',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                    Text(
+                                      currencyFormat.format(monthData.totalExpenses),
+                                      style: const TextStyle(
+                                        color: Colors.red,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              
+                              // Transactions count
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Transactions',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${monthData.transactionCount}',
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        
+                        // Total
+                        Container(
+                          width: double.infinity,
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                          child: Text(
+                            'Total: ${currencyFormat.format(monthData.netSavings)}',
                             style: TextStyle(
-                              color: monthData.netSavings >= 0 ? Colors.green : Colors.red,
                               fontWeight: FontWeight.bold,
+                              color: monthData.netSavings >= 0 ? Colors.green : Colors.red,
                             ),
                           ),
-                        ],
+                        ),
+                        
+                        const Divider(),
                       ],
                     ),
                   ),
                 );
-              },
+              }),
             ),
           ],
         ),
