@@ -23,6 +23,10 @@ class YearlyFileService {
   // Initialize the service
   Future<bool> initialize() async {
     try {
+      // Reset cached data
+      _currentYearData = null;
+      _currentMonthData = null;
+      
       // Get the directory 
       _baseDirectory = await _fileService.getDataDirectory();
       
@@ -284,28 +288,22 @@ class YearlyFileService {
   
   // Get yearly data
   Future<YearlyData> getYearlyData(int year) async {
-    if (year == _currentYear && _currentYearData != null) {
-      // Make sure current month data is included
-      if (_currentMonthData != null) {
-        // Check if current month data needs to be merged into yearly data
-        if (!_currentYearData!.months.containsKey(_currentMonth) || 
-            _currentYearData!.months[_currentMonth]!.transactions.length != 
-            _currentMonthData!.transactions.length) {
-          // Merge current month data
-          _currentYearData = _currentYearData!.updateMonth(_currentMonth!, _currentMonthData!);
-        }
-      }
-      return _currentYearData!;
-    }
-    
     try {
+      // Always read from disk to ensure we have the latest data
       final filePath = _getYearlyFilePath(year);
       final file = File(filePath);
       
       if (await file.exists()) {
         final contents = await file.readAsString();
         final json = jsonDecode(contents) as Map<String, dynamic>;
-        return YearlyData.fromJson(json);
+        YearlyData yearlyData = YearlyData.fromJson(json);
+        
+        // If this is the current year, make sure current month data is included
+        if (year == _currentYear && _currentMonthData != null) {
+          yearlyData = yearlyData.updateMonth(_currentMonth!, _currentMonthData!);
+        }
+        
+        return yearlyData;
       } else {
         return YearlyData.empty(year);
       }
@@ -521,6 +519,15 @@ class YearlyFileService {
   // Update a specific month's data in the yearly file
   Future<bool> updateMonth(int year, int month, MonthlyData updatedMonthData) async {
     try {
+      print('DEBUGGING: YearlyFileService.updateMonth - year: $year, month: $month');
+      print('DEBUGGING: Updated month data has ${updatedMonthData.transactions.length} transactions');
+      
+      // Sample a transaction for debugging if any exist
+      if (updatedMonthData.transactions.isNotEmpty) {
+        final sampleTx = updatedMonthData.transactions.first;
+        print('DEBUGGING: Sample transaction category: ${sampleTx.category}, subcategory: ${sampleTx.subcategory}');
+      }
+      
       // Load the yearly data
       final yearlyData = await getYearlyData(year);
       
@@ -532,6 +539,8 @@ class YearlyFileService {
       
       // Save the updated yearly data
       await _writeYearlyData(recalculatedYearlyData);
+      
+      print('DEBUGGING: Successfully wrote yearly data file for year $year');
       
       return true;
     } catch (e) {

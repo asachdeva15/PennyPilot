@@ -5,6 +5,7 @@ import '../models/category_mapping.dart';
 import '../models/yearly_data.dart';
 import '../repositories/yearly_data_repository.dart';
 import '../services/file_service.dart';
+import '../screens/home_screen.dart';
 
 class TransactionHistoryScreen extends StatefulWidget {
   const TransactionHistoryScreen({super.key});
@@ -51,7 +52,11 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
     });
 
     try {
+      // Force re-initialization to clear any cached data
       await _yearlyRepo.initialize();
+      
+      // Reset all transaction data
+      _allTransactions = [];
       
       // Get the current year's data
       final currentYear = DateTime.now().year;
@@ -72,11 +77,19 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         print('No data for previous year: $e');
       }
       
+      // Apply category mappings to all transactions
+      await _applyCategoryMappings();
+      
       // Load categories and subcategories
       await _loadCategories();
       
       // Apply initial filtering and sorting
       _applyFiltersAndSort();
+      
+      print('DEBUGGING: Loaded ${_allTransactions.length} transactions in total');
+      if (_allTransactions.isNotEmpty) {
+        print('DEBUGGING: Sample transaction - Category: ${_allTransactions[0].category}, Subcategory: ${_allTransactions[0].subcategory}');
+      }
       
     } catch (e) {
       print('Error loading transaction history: $e');
@@ -168,6 +181,59 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
       }
     } catch (e) {
       print('Error loading categories: $e');
+    }
+  }
+
+  // Apply category mappings to all transactions
+  Future<void> _applyCategoryMappings() async {
+    try {
+      print('DEBUGGING: Applying category mappings to ${_allTransactions.length} transactions');
+      
+      // Load all category mappings
+      final categoryMappings = await _fileService.loadAllCategoryMappings();
+      print('DEBUGGING: Loaded ${categoryMappings.length} category mappings');
+      
+      // Track which transactions were changed
+      List<Transaction> updatedTransactions = [];
+      
+      // Apply mappings to all transactions
+      for (var transaction in _allTransactions) {
+        // Look for a matching category mapping
+        for (var mapping in categoryMappings) {
+          if (mapping.matchesDescription(transaction.description, otherData: transaction.otherData)) {
+            print('DEBUGGING: Found mapping match for "${transaction.description}" using keyword "${mapping.keyword}"');
+            
+            // Only update if the category is actually changing
+            if (transaction.category != mapping.category || transaction.subcategory != mapping.subcategory) {
+              // Save the old values for debugging
+              final oldCategory = transaction.category;
+              final oldSubcategory = transaction.subcategory;
+              
+              // Update the transaction
+              transaction.category = mapping.category;
+              transaction.subcategory = mapping.subcategory;
+              transaction.matchedKeyword = mapping.keyword;
+              
+              print('DEBUGGING: Updating transaction from $oldCategory/$oldSubcategory to ${mapping.category}/${mapping.subcategory}');
+              
+              // Add to list of updated transactions
+              updatedTransactions.add(transaction);
+            }
+            break; // Use first matching rule
+          }
+        }
+      }
+      
+      // Save all updated transactions
+      if (updatedTransactions.isNotEmpty) {
+        print('DEBUGGING: Updating ${updatedTransactions.length} transactions based on category mappings');
+        
+        for (var transaction in updatedTransactions) {
+          await _yearlyRepo.updateTransaction(transaction);
+        }
+      }
+    } catch (e) {
+      print('Error applying category mappings: $e');
     }
   }
 
@@ -739,38 +805,71 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         backgroundColor: const Color(0xFFE68A00),
         actions: [
           IconButton(
-            icon: const Icon(Icons.sort),
-            onPressed: _showSortDialog,
-            tooltip: 'Sort',
-          ),
-          IconButton(
-            icon: const Icon(Icons.filter_list),
-            onPressed: _showFilterDialog,
-            tooltip: 'Filter',
-          ),
-          IconButton(
-            icon: const Icon(Icons.group_work),
-            onPressed: _showGroupDialog,
-            tooltip: 'Group',
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadData,
-            tooltip: 'Refresh',
+            icon: const Icon(Icons.home),
+            onPressed: () {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const HomeScreen())
+              );
+            },
+            tooltip: 'Home',
           ),
         ],
       ),
       body: Column(
         children: [
+          // Add a new row for the action buttons
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0), // Reduced vertical padding
+            decoration: const BoxDecoration(
+              color: Color(0xFFE68A00), // Use app's orange color for background
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black12,
+                  offset: Offset(0, 2),
+                  blurRadius: 4.0,
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ActionButton(
+                  icon: Icons.sort,
+                  label: 'Sort',
+                  onPressed: _showSortDialog,
+                ),
+                ActionButton(
+                  icon: Icons.filter_list,
+                  label: 'Filter',
+                  onPressed: _showFilterDialog,
+                ),
+                ActionButton(
+                  icon: Icons.group_work,
+                  label: 'Group',
+                  onPressed: _showGroupDialog,
+                ),
+                ActionButton(
+                  icon: Icons.refresh,
+                  label: 'Refresh',
+                  onPressed: _loadData,
+                ),
+              ],
+            ),
+          ),
+          
           // Search bar
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: TextField(
               decoration: InputDecoration(
                 hintText: 'Search transactions...',
-                prefixIcon: const Icon(Icons.search),
+                hintStyle: const TextStyle(
+                  color: Colors.black54, // Darker hint text
+                  fontWeight: FontWeight.w500, // Semi-bold for better visibility
+                ),
+                prefixIcon: const Icon(Icons.search, color: Colors.black54), // Darker icon
                 suffixIcon: IconButton(
-                  icon: const Icon(Icons.clear),
+                  icon: const Icon(Icons.clear, color: Colors.black54), // Darker icon
                   onPressed: () {
                     setState(() {
                       _searchQuery = null;
@@ -783,7 +882,14 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                 ),
                 filled: true,
                 fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0), // Better padding
               ),
+              style: const TextStyle(
+                color: Colors.black, // Dark text color for input
+                fontSize: 16.0, // Slightly larger font
+                fontWeight: FontWeight.w500, // Semi-bold for better visibility
+              ),
+              cursorColor: const Color(0xFFE68A00), // Match app's theme color
               onChanged: (value) {
                 setState(() {
                   _searchQuery = value;
@@ -1292,13 +1398,23 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                 ),
                 if (selectedCategory != null && transaction.description.isNotEmpty)
                   TextButton(
-                    onPressed: () {
+                    onPressed: () async {
                       Navigator.of(context).pop();
-                      _showAddKeywordMappingDialog(
-                        transaction.description,
-                        selectedCategory!,
-                        selectedSubcategory,
+                      // First update the transaction
+                      await _updateTransaction(
+                        transaction, 
+                        category: selectedCategory,
+                        subcategory: selectedSubcategory,
+                        otherData: otherDataController.text.trim() != "NONE" ? otherDataController.text.trim() : transaction.otherData,
                       );
+                      // Then show dialog to create rule
+                      if (mounted) {
+                        _showAddKeywordMappingDialog(
+                          transaction.description,
+                          selectedCategory!,
+                          selectedSubcategory,
+                        );
+                      }
                     },
                     child: const Text('Update & Create Rule'),
                   ),
@@ -1525,6 +1641,46 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
             child: const Text('Delete'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// Add a custom widget for the action buttons
+class ActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+
+  const ActionButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(4.0), // Smaller radius
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 12.0), // Reduced padding
+        child: Row(  // Changed to Row instead of Column for more compact layout
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 20.0), // White icon, smaller size
+            const SizedBox(width: 4.0), // Small spacing
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12.0,
+                fontWeight: FontWeight.w500,
+                color: Colors.white, // White text for contrast
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

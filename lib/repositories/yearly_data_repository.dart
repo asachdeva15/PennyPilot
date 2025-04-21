@@ -10,9 +10,9 @@ class YearlyDataRepository {
   
   /// Initialize the repository
   Future<bool> initialize() async {
-    if (_initialized) return true;
-    
     try {
+      // Always re-initialize
+      _initialized = false;
       _initialized = await _fileService.initialize();
       return _initialized;
     } catch (e) {
@@ -98,6 +98,9 @@ class YearlyDataRepository {
     await _ensureInitialized();
     
     try {
+      print('DEBUGGING: Updating transaction - ID: ${updatedTransaction.id}');
+      print('DEBUGGING: New category: ${updatedTransaction.category}, subcategory: ${updatedTransaction.subcategory}');
+      
       // Get the month data where the transaction belongs
       final year = updatedTransaction.date.year;
       final month = updatedTransaction.date.month;
@@ -124,6 +127,9 @@ class YearlyDataRepository {
         return false;
       }
       
+      print('DEBUGGING: Found transaction at index $transactionIndex');
+      print('DEBUGGING: Old transaction category: ${monthData.transactions[transactionIndex].category}, subcategory: ${monthData.transactions[transactionIndex].subcategory}');
+      
       // Create a new list with the updated transaction
       final updatedTransactions = List<Transaction>.from(monthData.transactions);
       updatedTransactions[transactionIndex] = updatedTransaction;
@@ -139,6 +145,8 @@ class YearlyDataRepository {
         month, 
         updatedMonthData,
       );
+      
+      print('DEBUGGING: Update result: $success');
       
       return success;
     } catch (e) {

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/category_mapping.dart';
 import '../providers/category_mapping_provider.dart';
 import '../providers/category_provider.dart';
+import '../screens/home_screen.dart';
 
 class CategoryMappingScreen extends ConsumerStatefulWidget {
   const CategoryMappingScreen({Key? key}) : super(key: key);
@@ -240,6 +241,16 @@ class _CategoryMappingScreenState extends ConsumerState<CategoryMappingScreen> {
         title: const Text('Category Mappings'),
         backgroundColor: const Color(0xFFE68A00),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.home),
+            onPressed: () {
+              // Navigate to the home screen without showing splash screen
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const HomeScreen())
+              );
+            },
+            tooltip: 'Home',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.read(categoryMappingProvider.notifier).refreshMappings(),

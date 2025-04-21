@@ -208,8 +208,7 @@ class _DataUploadScreenState extends State<DataUploadScreen> {
               title: const Text('Home'),
               onTap: () {
                 Navigator.pop(context); // Close the drawer
-                Navigator.push(
-                  context, 
+                Navigator.of(context).pushReplacement(
                   MaterialPageRoute(builder: (context) => const HomeScreen()),
                 );
               },
@@ -239,46 +238,25 @@ class _DataUploadScreenState extends State<DataUploadScreen> {
         ),
       ),
       appBar: AppBar(
-        toolbarHeight: 0, // Zero height app bar to let the custom header show
+        title: const Text('Upload Transactions'),
         backgroundColor: const Color(0xFFE68A00),
-        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.home),
+            onPressed: () {
+              // Navigate to the home screen without showing splash screen
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const HomeScreen())
+              );
+            },
+            tooltip: 'Home',
+          ),
+        ],
       ),
       body: Column(
         children: [
-          // Branded header with logo
-          Container(
-            height: headerHeight,
-            width: double.infinity,
-            color: const Color(0xFFE68A00), // #e68a00 color
-            child: SafeArea(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    child: Row(
-                      children: [
-                        Builder(
-                          builder: (context) => IconButton(
-                            icon: const Icon(Icons.menu, color: Colors.white),
-                            onPressed: () {
-                              Scaffold.of(context).openDrawer();
-                            },
-                          ),
-                        ),
-                        const Spacer(),
-                      ],
-                    ),
-                  ),
-                  Image.asset(
-                    'LOGO.png',
-                    width: 150,
-                    height: 110,
-                  ),
-                ],
-              ),
-            ),
-          ),
+          // Remove the branded header with logo since we have the AppBar now
+          
           // Content area
           Expanded(
             child: Padding(
