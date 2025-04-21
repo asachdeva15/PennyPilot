@@ -12,6 +12,7 @@ class Transaction {
   final String bankName;
   String? notes;
   String? otherData;
+  String? csvId;
 
   Transaction({
     required this.id,
@@ -24,6 +25,7 @@ class Transaction {
     required this.bankName,
     this.notes,
     this.otherData,
+    this.csvId,
   });
   
   factory Transaction.fromJson(Map<String, dynamic> json) {
@@ -38,6 +40,7 @@ class Transaction {
       bankName: json['bankName'] as String,
       notes: json['notes'] as String?,
       otherData: json['otherData'] as String?,
+      csvId: json['csvId'] as String?,
     );
   }
     
@@ -53,6 +56,7 @@ class Transaction {
       'bankName': bankName,
       'notes': notes,
       'otherData': otherData,
+      'csvId': csvId,
     };
   }
     
@@ -68,6 +72,7 @@ class Transaction {
     String? bankName,
     String? notes,
     String? otherData,
+    String? csvId,
   }) {
     return Transaction(
       id: id ?? this.id,
@@ -80,6 +85,7 @@ class Transaction {
       bankName: bankName ?? this.bankName,
       notes: notes ?? this.notes,
       otherData: otherData ?? this.otherData,
+      csvId: csvId ?? this.csvId,
     );
   }
     
@@ -169,6 +175,7 @@ class Transaction {
       category: 'unknown',
       subcategory: 'uncategorized',
       otherData: otherData,
+      csvId: uuid.v4(),
     );
   }
   

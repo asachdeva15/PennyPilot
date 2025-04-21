@@ -1345,6 +1345,9 @@ class FileService {
     BankMapping? mapping,
   ) async {
     try {
+      // Generate a unique CSV ID for this batch
+      final String csvId = 'csv_${DateTime.now().millisecondsSinceEpoch}_${file.path.split('/').last.replaceAll('.csv', '')}';
+      
       if (bankName == null || mapping == null) {
         // Log the issue but continue with default values
         print('Warning: Bank name or mapping is null. Using defaults.');
@@ -1493,7 +1496,9 @@ class FileService {
             bankName,
             dateFormatType: mapping.dateFormatType ?? DateFormatType.iso
           );
-          transactions.add(transaction);
+          
+          // Set the CSV ID for this transaction
+          transactions.add(transaction.copyWith(csvId: csvId));
         } catch (e) {
           // Skip this row and continue
         }

@@ -59,6 +59,8 @@ class _HomeScreenState extends State<HomeScreen> {
     super.didChangeDependencies();
     // Refresh banks whenever the dependencies change (e.g., returning from other screens)
     _loadBanks();
+    // Always reload yearly data when returning to this screen
+    _loadData();
   }
 
   // Request all required permissions upfront

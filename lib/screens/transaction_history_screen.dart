@@ -31,6 +31,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
   String? _filterCategory;
   String? _filterSubcategory;
   String? _filterBankName;
+  String? _filterCsvId;
   DateTime? _filterStartDate;
   DateTime? _filterEndDate;
   double? _filterMinAmount;
@@ -38,7 +39,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
   String? _searchQuery;
   
   // Grouping options
-  String _groupBy = 'bank'; // 'bank', 'category', 'month', 'none'
+  String _groupBy = 'bank'; // 'bank', 'category', 'month', 'csvId', 'none'
 
   @override
   void initState() {
@@ -260,6 +261,12 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         t.bankName == _filterBankName).toList();
     }
     
+    // Apply CSV ID filter
+    if (_filterCsvId != null && _filterCsvId!.isNotEmpty) {
+      _filteredTransactions = _filteredTransactions.where((t) => 
+        t.csvId == _filterCsvId).toList();
+    }
+    
     // Apply date range filter
     if (_filterStartDate != null) {
       _filteredTransactions = _filteredTransactions.where((t) => 
@@ -352,6 +359,12 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
           final monthYear = DateFormat('MMMM yyyy').format(transaction.date);
           groupKey = monthYear;
           break;
+        case 'csvId':
+          // Group by CSV ID, show "Unknown" for transactions without CSV ID
+          groupKey = transaction.csvId != null && transaction.csvId!.isNotEmpty 
+              ? _formatCsvId(transaction.csvId!)
+              : 'Unknown Source';
+          break;
         default:
           groupKey = transaction.bankName;
       }
@@ -370,6 +383,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
       _filterCategory = null;
       _filterSubcategory = null;
       _filterBankName = null;
+      _filterCsvId = null;
       _filterStartDate = null;
       _filterEndDate = null;
       _filterMinAmount = null;
@@ -384,6 +398,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
     String? tempCategory = _filterCategory;
     String? tempSubcategory = _filterSubcategory;
     String? tempBankName = _filterBankName;
+    String? tempCsvId = _filterCsvId;
     DateTime? tempStartDate = _filterStartDate;
     DateTime? tempEndDate = _filterEndDate;
     
@@ -393,6 +408,22 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         .toSet()
         .toList();
     bankNames.sort();
+
+    // Get unique CSV IDs from transactions, excluding null values
+    final csvIds = _allTransactions
+        .where((t) => t.csvId != null && t.csvId!.isNotEmpty)
+        .map((t) => t.csvId!)
+        .toSet()
+        .toList();
+    
+    // Format CSV IDs for display
+    final Map<String, String> formattedCsvIds = {};
+    for (var csvId in csvIds) {
+      formattedCsvIds[csvId] = _formatCsvId(csvId);
+    }
+    
+    // Sort CSV IDs by formatted display name
+    csvIds.sort((a, b) => formattedCsvIds[a]!.compareTo(formattedCsvIds[b]!));
 
     showDialog(
       context: context,
@@ -483,6 +514,30 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                   ),
                   const SizedBox(height: 16),
                   
+                  // CSV ID dropdown
+                  const Text('CSV ID:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  DropdownButton<String?>(
+                    isExpanded: true,
+                    value: tempCsvId,
+                    hint: const Text('All CSV IDs'),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('All CSV IDs'),
+                      ),
+                      ...csvIds.map((csvId) => DropdownMenuItem<String?>(
+                        value: csvId,
+                        child: Text(formattedCsvIds[csvId]!),
+                      )).toList(),
+                    ],
+                    onChanged: (value) {
+                      setDialogState(() {
+                        tempCsvId = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  
                   // Date range
                   const Text('Date Range:', style: TextStyle(fontWeight: FontWeight.bold)),
                   Row(
@@ -552,6 +607,7 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                     _filterCategory = tempCategory;
                     _filterSubcategory = tempSubcategory;
                     _filterBankName = tempBankName;
+                    _filterCsvId = tempCsvId;
                     _filterStartDate = tempStartDate;
                     _filterEndDate = tempEndDate;
                     _applyFiltersAndSort();
@@ -723,6 +779,16 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                   },
                 ),
                 RadioListTile<String>(
+                  title: const Text('By CSV Upload'),
+                  value: 'csvId',
+                  groupValue: tempGroupBy,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      tempGroupBy = value!;
+                    });
+                  },
+                ),
+                RadioListTile<String>(
                   title: const Text('No Grouping'),
                   value: 'none',
                   groupValue: tempGroupBy,
@@ -845,6 +911,25 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         );
       }
     }
+  }
+
+  // Helper method to format CSV ID into readable text
+  String _formatCsvId(String csvId) {
+    final parts = csvId.split('_');
+    if (parts.length >= 3 && parts[0] == 'csv') {
+      // Extract timestamp and filename
+      final timestamp = int.tryParse(parts[1]);
+      final filename = parts.sublist(2).join('_');
+      
+      if (timestamp != null) {
+        final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+        final formattedDate = DateFormat('yyyy-MM-dd').format(date);
+        return '$formattedDate - $filename';
+      } else {
+        return filename;
+      }
+    }
+    return csvId;
   }
 
   @override
@@ -975,6 +1060,8 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                             _buildFilterChip('Subcategory: $_filterSubcategory'),
                           if (_filterBankName != null)
                             _buildFilterChip('Bank: $_filterBankName'),
+                          if (_filterCsvId != null)
+                            _buildFilterChip('CSV: ${_formatCsvId(_filterCsvId!)}'),
                           if (_filterStartDate != null)
                             _buildFilterChip('From: ${DateFormat('dd MMM yyyy').format(_filterStartDate!)}'),
                           if (_filterEndDate != null)
@@ -1086,7 +1173,15 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
                       ? Colors.green 
                       : Colors.red,
                 ),
-              )
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                onPressed: () => _showDeleteGroupConfirmationDialog(groupName, transactions),
+                tooltip: 'Delete group',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                splashRadius: 20,
+              ),
             ],
           ),
           initiallyExpanded: index == 0, // Expand the first group by default
@@ -1602,6 +1697,144 @@ class _TransactionHistoryScreenState extends State<TransactionHistoryScreen> {
         ],
       ),
     );
+  }
+
+  // Add this method to handle group deletion
+  void _showDeleteGroupConfirmationDialog(String groupName, List<Transaction> transactions) {
+    // Calculate total amount
+    final totalAmount = transactions.fold(0.0, (sum, tx) => sum + tx.amount);
+    final currencyFormat = NumberFormat.currency(locale: 'de_DE', symbol: '€');
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Group?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Are you sure you want to delete this group? This cannot be undone.',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Text('Group: $groupName'),
+            Text('Transactions: ${transactions.length}'),
+            Text('Total: ${currencyFormat.format(totalAmount)}', 
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: totalAmount >= 0 ? Colors.green : Colors.red,
+              )
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'This will permanently delete all transactions in this group.',
+              style: TextStyle(color: Colors.red),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _deleteGroup(groupName, transactions);
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: const Text('Delete Group'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Implement the logic to delete a group
+  Future<void> _deleteGroup(String groupName, List<Transaction> transactions) async {
+    // Show a loading dialog for groups with more than 10 transactions
+    bool showProgress = transactions.length > 10;
+    BuildContext? dialogContext;
+    
+    if (showProgress && mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) {
+          dialogContext = context;
+          return AlertDialog(
+            title: const Text('Deleting Group'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text('Deleting ${transactions.length} transactions...'),
+              ],
+            ),
+          );
+        },
+      );
+    } else {
+      setState(() {
+        _isLoading = true;
+      });
+    }
+    
+    try {
+      int successCount = 0;
+      int failureCount = 0;
+      
+      // Delete each transaction in the group
+      for (var transaction in transactions) {
+        final success = await _yearlyRepo.deleteTransaction(transaction);
+        if (success) {
+          successCount++;
+        } else {
+          failureCount++;
+        }
+      }
+      
+      // Close the progress dialog if it was shown
+      if (showProgress && dialogContext != null && mounted) {
+        Navigator.of(dialogContext!).pop();
+      }
+      
+      // Refresh data after deletion
+      await _loadData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Group deleted: $successCount transactions successful, $failureCount failed'
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      // Close the progress dialog if it was shown
+      if (showProgress && dialogContext != null && mounted) {
+        Navigator.of(dialogContext!).pop();
+      }
+      
+      print('Error deleting group: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error deleting group: $e')),
+        );
+      }
+    } finally {
+      if (!showProgress && mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 }
 
